@@ -1,0 +1,11 @@
+/target/
+
+.DS_Store
+.idea/
+.vscode/
+
+*.log
+
+benchmarks/results/*.json
+benchmarks/results/*.csv
+benchmarks/results/*.html
