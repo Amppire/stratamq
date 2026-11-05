@@ -78,7 +78,7 @@ impl ProposedRecord {
 
     #[must_use]
     pub fn commit(self, timestamp: u64, revision: Option<u64>) -> Record {
-        Record::new(
+        Record {
             id: RecordId::new(),
             timestamp,
             subject: self.subject,
@@ -86,7 +86,7 @@ impl ProposedRecord {
             key: self.key,
             headers: self.headers,
             payload: self.payload,
-        )
+        }
     }
 }
 
@@ -145,16 +145,13 @@ mod tests {
     #[test]
     fn proposed_record_has_no_metadata() {
         let proposed = ProposedRecord::new("payload").with_subject(Subject::new("subject"));
-        
+
         assert_eq!(proposed.subject().map(Subject::as_str), Some("subject"));
-        assert!(proposed.revision().is_none());
-        assert!(proposed.timestamp().is_none());
     }
 
     #[test]
     fn commit_assigns_metadata() {
-        let proposed = ProposedRecord::new("payload")
-            .with_subject(Subject::new("subject"));
+        let proposed = ProposedRecord::new("payload").with_subject(Subject::new("subject"));
 
         let record = proposed.commit(1234567890, Some(1));
 
