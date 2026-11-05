@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 
-use thiserror::Error;
 use strata_record::{Record, Subject};
-use strata_types::{JournalId};
+use strata_types::JournalId;
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedRevision {
