@@ -121,6 +121,15 @@ impl Journal {
             _ => Err(AppendError::RevisionMismatch { expected, actual }),
         }
     }
+
+    pub fn records_by_subject<'a>(
+        &'a self,
+        subject: &'a Subject,
+    ) -> impl Iterator<Item = &'a Record> + 'a {
+        self.records
+            .iter()
+            .filter(move |record| record.subject() == Some(subject))
+    }
 }
 
 impl Default for Journal {
@@ -222,5 +231,22 @@ mod tests {
         let mut journal = Journal::new();
         let result = journal.append(ProposedRecord::new("payload"), ExpectedRevision::NoSubject);
         assert_eq!(result, Err(AppendError::RevisionWithoutSubject));
+    }
+
+    #[test]
+    fn subject_history() {
+        let mut journal = Journal::new();
+        journal
+            .append(proposed("subject"), ExpectedRevision::NoSubject)
+            .unwrap();
+        journal
+            .append(proposed("subject"), ExpectedRevision::Exact(0))
+            .unwrap();
+        journal
+            .append(proposed("subject"), ExpectedRevision::Exact(1))
+            .unwrap();
+        let subject = subject("subject");
+        let records: Vec<_> = journal.records_by_subject(&subject).collect();
+        assert_eq!(records.len(), 3);
     }
 }
