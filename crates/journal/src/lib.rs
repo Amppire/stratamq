@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
-use std::{collections::HashMap, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    collections::HashMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use thiserror::Error;
 
 use strata_record::{ProposedRecord, Record, Subject};
@@ -28,13 +31,13 @@ pub enum AppendError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppendResult {
-    pub revision: u64,
+    pub revision: Option<u64>,
     pub position: u64,
 }
 pub struct Journal {
     id: JournalId,
     records: Vec<Record>,
-    revisions: HashMap<String, u64>,
+    revisions: HashMap<Subject, u64>,
 }
 
 impl Journal {
@@ -72,12 +75,16 @@ impl Journal {
         self.revisions.get(subject).copied()
     }
 
-    pub fn append(&mut self, proposed: ProposedRecord, expected_revision: ExpectedRevision) -> Result<AppendResult, AppendError> {
+    pub fn append(
+        &mut self,
+        proposed: ProposedRecord,
+        expected_revision: ExpectedRevision,
+    ) -> Result<AppendResult, AppendError> {
         let subject = proposed.subject().cloned();
-        let current_revision = subject.as_ref().and_then(|s| self.revisions.get(s).copied());
         let next_revision = match subject.as_ref() {
             Some(subject) => {
-                Self::validate_revision(expected_revision, current_revision)?;
+                let current = self.current_revision(subject);
+                Self::validate_revision(expected_revision, current)?;
                 Some(match current {
                     Some(revision) => revision + 1,
                     None => 0,
@@ -103,23 +110,15 @@ impl Journal {
         })
     }
 
-    fn validate_revision(expected: ExpectedRevision, actual: Option<u64>) -> Result<(), AppendError> {
+    fn validate_revision(
+        expected: ExpectedRevision,
+        actual: Option<u64>,
+    ) -> Result<(), AppendError> {
         match expected {
             ExpectedRevision::Any => Ok(()),
-            ExpectedRevision::Exact(expected) => {
-                if actual == Some(expected) => {
-                    Ok(())
-                }
-            }
-            ExpectedRevision::NoSubject => {
-                if actual.is_none() => {
-                    Ok(())
-                }
-            }
-            _ => Err(AppendError::RevisionMismatch {
-                expected,
-                actual,
-            }),
+            ExpectedRevision::Exact(expected) if actual == Some(expected) => Ok(()),
+            ExpectedRevision::NoSubject if actual.is_none() => Ok(()),
+            _ => Err(AppendError::RevisionMismatch { expected, actual }),
         }
     }
 }
@@ -131,6 +130,97 @@ impl Default for Journal {
 }
 
 fn current_timestamp() -> Result<u64, AppendError> {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| AppendError::InvalidSystemTime)?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| AppendError::InvalidSystemTime)?;
     Ok(now.as_millis() as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn subject(name: &str) -> Subject {
+        Subject::new(name)
+    }
+    fn proposed(subject_name: &str) -> ProposedRecord {
+        ProposedRecord::new("payload").with_subject(subject(subject_name))
+    }
+
+    #[test]
+    fn first_subject_gets_revision_zero() {
+        let mut journal = Journal::new();
+        let result = journal
+            .append(proposed("subject"), ExpectedRevision::NoSubject)
+            .unwrap();
+        assert_eq!(result.revision, Some(0));
+        assert_eq!(journal.current_revision(&subject("subject")), Some(0));
+    }
+
+    #[test]
+    fn second_subject_gets_revision_one() {
+        let mut journal = Journal::new();
+        journal
+            .append(proposed("subject"), ExpectedRevision::NoSubject)
+            .unwrap();
+        let result = journal
+            .append(proposed("subject"), ExpectedRevision::Exact(0))
+            .unwrap();
+        assert_eq!(result.revision, Some(1));
+        assert_eq!(journal.current_revision(&subject("subject")), Some(1));
+    }
+
+    #[test]
+    fn reject_stale_expected_revision() {
+        let mut journal = Journal::new();
+        journal
+            .append(proposed("subject"), ExpectedRevision::NoSubject)
+            .unwrap();
+        journal
+            .append(proposed("subject"), ExpectedRevision::Exact(0))
+            .unwrap();
+        let result = journal.append(proposed("subject"), ExpectedRevision::Exact(0));
+        assert_eq!(
+            result,
+            Err(AppendError::RevisionMismatch {
+                expected: ExpectedRevision::Exact(0),
+                actual: Some(1),
+            })
+        );
+        assert_eq!(journal.len(), 2);
+    }
+
+    #[test]
+    fn reject_no_subject_revision_when_subject_exists() {
+        let mut journal = Journal::new();
+        journal
+            .append(proposed("subject"), ExpectedRevision::NoSubject)
+            .unwrap();
+        let result = journal.append(proposed("subject"), ExpectedRevision::NoSubject);
+        assert_eq!(
+            result,
+            Err(AppendError::RevisionMismatch {
+                expected: ExpectedRevision::NoSubject,
+                actual: Some(0),
+            })
+        );
+    }
+
+    #[test]
+    fn append_record_without_subject() {
+        let mut journal = Journal::new();
+        let result = journal
+            .append(ProposedRecord::new("payload"), ExpectedRevision::Any)
+            .unwrap();
+        assert_eq!(result.position, 0);
+        assert_eq!(result.revision, None);
+        assert_eq!(journal.len(), 1);
+    }
+
+    #[test]
+    fn reject_revision_without_subject() {
+        let mut journal = Journal::new();
+        let result = journal.append(ProposedRecord::new("payload"), ExpectedRevision::NoSubject);
+        assert_eq!(result, Err(AppendError::RevisionWithoutSubject));
+    }
 }
