@@ -1,6 +1,10 @@
 [package]
-name = "journal"
-version = "0.1.0"
-edition = "2024"
+name = "strata-journal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
+thiserror.workspace = true
+strata-record = { path = "../record" }
+strata-types = { path = "../types" }
