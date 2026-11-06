@@ -130,6 +130,15 @@ impl Journal {
             .iter()
             .filter(move |record| record.subject() == Some(subject))
     }
+
+    pub fn records_by_range(&self, position: u64, max_records: usize) -> &[Record] {
+        let start = position as usize;
+        if start >= self.records.len() {
+            return &[];
+        }
+        let end = start.saturating_add(max_records).min(self.records.len());
+        &self.records[start..end]
+    }
 }
 
 impl Default for Journal {
