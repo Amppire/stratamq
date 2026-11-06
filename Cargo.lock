@@ -187,16 +187,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "strata-subscription"
+version = "0.0.1"
+dependencies = [
+ "strata-journal",
+ "strata-record",
+ "strata-types",
+ "thiserror",
+]
+
+[[package]]
 name = "strata-types"
 version = "0.0.1"
 dependencies = [
  "serde",
  "uuid",
 ]
-
-[[package]]
-name = "subscription"
-version = "0.1.0"
 
 [[package]]
 name = "syn"
