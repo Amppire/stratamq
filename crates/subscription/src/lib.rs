@@ -11,6 +11,12 @@ pub enum SubscriptionMode {
     Ephemeral,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubscriptionState {
+    Active,
+    Inactive,
+    Closed,
+}
 #[derive(Debug, Clone)]
 pub struct Subscription {
     id: SubscriptionId,
@@ -75,3 +81,12 @@ impl Default for StreamState {
         Self::new()
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Lease {
+    pub record_id: RecordId,
+    pub lease_id: LeaseId,
+    pub consumer_id: ConsumerId,
+    pub generation: u64,
+    pub expires_at: u64,
+}
+
