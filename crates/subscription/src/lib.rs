@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
-use strata_types::{JournalId, SubscriptionId};
+use std::collections::HashMap;
+use strata_types::{ConsumerId, JournalId, LeaseId, RecordId, SubscriptionId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubscriptionMode {
@@ -81,6 +82,60 @@ impl Default for StreamState {
         Self::new()
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkStatus {
+    Ready,
+    Leased {
+        lease_id: LeaseId,
+        consumer_id: ConsumerId,
+        generation: u64,
+        expires_at: u64,
+    },
+    RetryWait {
+        available_at: u64,
+        generation: u64,
+    },
+    Complete,
+    DeadLettered,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkItemState {
+    pub status: WorkStatus,
+    pub delivery_attempts: u32,
+    pub generation: u64,
+}
+
+impl Default for WorkItemState {
+    fn default() -> Self {
+        Self {
+            status: WorkStatus::Ready,
+            delivery_attempts: 0,
+            generation: 0,
+        }
+    }
+}
+
+pub struct WorkState {
+    items: HashMap<RecordId, WorkItemState>,
+}
+
+impl WorkState {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            items: HashMap::new(),
+        }
+    }
+}
+
+impl Default for WorkState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lease {
     pub record_id: RecordId,
