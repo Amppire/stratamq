@@ -8,3 +8,6 @@ license.workspace = true
 thiserror.workspace = true
 strata-record = { path = "../record" }
 strata-types = { path = "../types" }
+
+[lints]
+workspace = true
