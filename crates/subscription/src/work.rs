@@ -132,28 +132,30 @@ impl WorkState {
         self.items.get(record_id)
     }
 
-    pub fn acquire(
-        &mut self,
-        journal: &strata_journal::Journal,
-        consumer_id: ConsumerId,
-        now: u64,
-        lease_duration: u64,
-        max_records: usize,
-    ) -> Vec<Lease> {
-        let mut leases = Vec::new();
-        for record in journal.records_by_range(0, journal.len()) {
-            if leases.len() >= max_records {
-                break;
-            }
+    #[must_use]
+    pub fn ready_len(&self) -> usize {
+        self.ready.len()
+    }
 
-            let state = self.items.entry(record.id()).or_default();
-            let available = match state.status {
-                WorkStatus::Ready => true,
-                WorkStatus::RetryWait { available_at, .. } => available_at <= now,
-                _ => false,
+    pub fn acquire(&mut self, journal: &strata_journal::Journal, consumer_id: ConsumerId, now: u64, lease_duration: u64, max_records: usize) -> Vec<Lease> {
+        let mut leases = Vec::new();
+        while leases.len() < max_records {
+            let Some(record_id) =
+                self.ready.pop()
+            else {
+                break;
             };
 
-            if !available {
+            let Some(state) =
+                self.items.get_mut(&record_id)
+            else {
+                continue;
+            };
+
+            if !matches!(
+                state.status,
+                WorkStatus::Ready
+            ) {
                 continue;
             }
 
@@ -164,14 +166,13 @@ impl WorkState {
             let expires_at = now.saturating_add(lease_duration);
 
             state.status = WorkStatus::Leased {
-                lease_id,
-                consumer_id,
-                generation: state.generation,
-                expires_at,
+                    lease_id,
+                    consumer_id,
+                    generation: state.generation,
+                    expires_at,
             };
-
             leases.push(Lease {
-                record_id: record.id(),
+                record_id,
                 lease_id,
                 consumer_id,
                 generation: state.generation,
@@ -188,45 +189,9 @@ impl WorkState {
             .ok_or(WorkError::NotLeased {
                 record_id: lease.record_id,
             })?;
-        match state.status {
-            WorkStatus::Complete | WorkStatus::DeadLettered => {
-                Err(WorkError::AlreadyCompletedOrDeadLettered {
-                    record_id: lease.record_id,
-                })
-            }
-            WorkStatus::Leased {
-                lease_id,
-                generation,
-                expires_at,
-                ..
-            } => {
-                if lease_id != lease.lease_id {
-                    return Err(WorkError::LeaseMismatch {
-                        record_id: lease.record_id,
-                        lease_id: lease.lease_id,
-                    });
-                }
-                if generation != lease.generation {
-                    return Err(WorkError::StaleGeneration {
-                        record_id: lease.record_id,
-                        current_generation: generation,
-                        provided_generation: lease.generation,
-                    });
-                }
-                if expires_at < now {
-                    return Err(WorkError::LeaseExpired {
-                        record_id: lease.record_id,
-                        current_time: now,
-                        lease_expiration: expires_at,
-                    });
-                }
-                state.status = WorkStatus::Complete;
-                Ok(())
-            }
-            _ => Err(WorkError::NotLeased {
-                record_id: lease.record_id,
-            }),
-        }
+        Self::validate_lease(state, lease, now)?;
+        state.status = WorkStatus::Complete;
+        Ok(())
     }
 
     pub fn nack(&mut self, lease: Lease, now: u64) -> Result<(), WorkError> {
@@ -241,79 +206,12 @@ impl WorkState {
             state.status = WorkStatus::DeadLettered;
             return Ok(());
         }
-        let retry_delay = self
-            .retry_policy
-            .delay_for_attempt(state.delivery_attempts);
+        let retry_delay = self.retry_policy.delay_for_attempt(state.delivery_attempts);
         state.status = WorkStatus::RetryWait {
             available_at: now.saturating_add(retry_delay),
             generation: state.generation,
         };
         Ok(())
-    }
-
-    pub fn expire_leases(&mut self, now: u64) {
-        for state in self.items.values_mut() {
-            if let WorkStatus::Leased { expires_at, .. } = state.status
-                && expires_at < now
-            {
-                state.status = WorkStatus::Ready;
-            }
-        }
-    }
-
-    pub fn extend(
-        &mut self,
-        lease: Lease,
-        now: u64,
-        extension: u64,
-    ) -> Result<Lease, WorkError> {
-        let state = self
-            .items
-            .get_mut(&lease.record_id)
-            .ok_or(WorkError::NotLeased {
-                record_id: lease.record_id,
-            })?;
-        match &mut state.status {
-            WorkStatus::Leased {
-                lease_id,
-                consumer_id,
-                generation,
-                expires_at,
-            } => {
-                if *lease_id != lease.lease_id {
-                    return Err(WorkError::LeaseMismatch {
-                        record_id: lease.record_id,
-                        lease_id: lease.lease_id,
-                    });
-                }
-                if *generation != lease.generation {
-                    return Err(WorkError::StaleGeneration {
-                        record_id: lease.record_id,
-                        current_generation: *generation,
-                        provided_generation: lease.generation,
-                    });
-                }
-                if *expires_at < now {
-                    return Err(WorkError::LeaseExpired {
-                        record_id: lease.record_id,
-                        current_time: now,
-                        lease_expiration: *expires_at,
-                    });
-                }
-                let new_expiry = now.saturating_add(extension);
-                *expires_at = new_expiry;
-                Ok(Lease {
-                    record_id: lease.record_id,
-                    lease_id: *lease_id,
-                    consumer_id: *consumer_id,
-                    generation: *generation,
-                    expires_at: new_expiry,
-                })
-            }
-            _ => Err(WorkError::NotLeased {
-                record_id: lease.record_id,
-            }),
-        }
     }
 
     pub fn extend_lease(
@@ -322,7 +220,19 @@ impl WorkState {
         now: u64,
         extension: u64,
     ) -> Result<Lease, WorkError> {
-        self.extend(lease, now, extension)
+        let state = self.items.get_mut(&lease.record_id).ok_or(WorkError::NotLeased)?;
+        validate_lease(state, lease, now)?;
+        let new_expiry = lease.expires_at.saturating_add(extension);
+        state.status = WorkStatus::Leased {
+            lease_id: lease.lease_id,
+            consumer_id: lease.consumer_id,
+            generation: lease.generation,
+            expires_at: new_expiry,
+        };
+        Ok(Lease {
+            expires_at: new_expiry,
+            ..lease
+        })
     }
 
     pub fn validate_lease(state: &WorkItemState, lease: Lease, now: u64) -> Result<(), WorkError> {
@@ -365,6 +275,46 @@ impl WorkState {
             }),
         }
     }
+
+    pub fn promote_retries(&mut self, now: u64) {
+        let mut ready_ids = Vec::new();
+        for (record_id, state) in &mut self.items {
+            let eligible = matches!(
+                state.status,
+                WorkStatus::RetryWait {
+                    available_at,
+                    ..
+                } if available_at <= now
+            );
+            if eligible {
+                state.status = WorkStatus::Ready;
+                ready_ids.push(*record_id);
+            }
+        }
+        for record_id in ready_ids {
+            self.ready.push(record_id);
+        }
+    }
+
+    pub fn expire_leases(&mut self, now: u64) {
+        let mut ready_ids = Vec::new();
+        for (record_id, state) in &mut self.items {
+            let expired = matches!(
+                state.status,
+                WorkStatus::Leased {
+                    expires_at,
+                    ..
+                } if expires_at < now
+            );
+            if expired {
+                state.status = WorkStatus::Ready;
+                ready_ids.push(*record_id);
+            }
+        }
+        for record_id in ready_ids {
+            self.ready.push(record_id);
+        }
+    }
 }
 
 impl Default for WorkState {
@@ -376,6 +326,15 @@ impl Default for WorkState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn policy() -> RetryPolicy {
+        RetryPolicy {
+            max_attempts: 3,
+            delay: RetryDelay::Fixed {
+                delay_ms: 1000,
+            },
+        }
+    }
 
     #[test]
     fn worker_can_acquire_and_acknowledge() {
