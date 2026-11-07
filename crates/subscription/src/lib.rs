@@ -119,6 +119,7 @@ impl Default for WorkItemState {
 
 pub struct WorkState {
     items: HashMap<RecordId, WorkItemState>,
+    retry_policy: RetryPolicy,
 }
 
 impl WorkState {
@@ -126,6 +127,7 @@ impl WorkState {
     pub fn new() -> Self {
         Self {
             items: HashMap::new(),
+            retry_policy: RetryPolicy::default(),
         }
     }
 }
@@ -349,12 +351,42 @@ impl WorkState {
             }
         }
     }
+
+#[derive(Debug, Clone)]
+pub enum RetryDelay {
+    Immediate,
+    Fixed {
+        delay: u64,
+    },
+    Exponential {
+        initial: u64,
+        multiplier: u32,
+        max: u64,
+    },
 }
 
-impl WorkState {
+#[derive(Debug, Clone)]
+pub struct RetryPolicy {
+    pub max_attempts: u32,
+    pub delay: RetryDelay
+}
+
+impl RetryPolicy {
     #[must_use]
-    pub fn state(&self, record_id: RecordId) -> Option<&WorkItemState> {
-        self.items.get(&record_id)
+    pub fn delay_for_attempt(&self, attempt: u32) -> u64 {
+        match self.delay {
+            RetryDelay::Immediate => 0,
+            RetryDelay::Fixed { delay } => { delay },
+            RetryDelay::Exponential {
+                initial,
+                multiplier,
+                max,
+            } => {
+                let exponent = attempt.saturating_sub(1);
+                let factor = u64::from(multiplier).saturating_pow(exponent);
+                initial.saturating_mul(factor).min(max)
+            }
+        }
     }
 }
 
