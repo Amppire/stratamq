@@ -108,6 +108,20 @@ impl WorkState {
         }
     }
 
+    pub fn register(
+        &mut self,
+        record_id: RecordId,
+    ) {
+        if self.items.contains_key(&record_id) {
+            return;
+        }
+        self.items.insert(
+            record_id,
+            WorkItemState::default(),
+        );
+        self.ready.push(record_id);
+    }
+
     #[must_use]
     pub fn state(&self, record_id: RecordId) -> Option<&WorkItemState> {
         self.items.get(&record_id)
@@ -449,5 +463,17 @@ mod tests {
         let lease = work.acquire(&journal, ConsumerId::new(), 1000, 5000, 1)[0];
         let extended = work.extend(lease, 2000, 5000).unwrap();
         assert!(extended.expires_at > lease.expires_at);
+    }
+
+    #[test]
+    fn registered_record_can_be_acquired() {
+        let record_id =RecordId::new();
+        let consumer =ConsumerId::new();
+        let mut work =WorkState::new(policy());
+
+        work.register(record_id);
+        let leases = work.acquire(consumer, 1000, 5000, 1);
+        assert_eq!(leases.len(), 1);
+        assert_eq!(leases[0].record_id, record_id);
     }
 }
