@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use strata_types::{ConsumerId, LeaseId, RecordId};
-
-use crate::error::WorkError;
+use crate::{FifoReadyQueue, ReadyQueue, WorkError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lease {
@@ -95,6 +94,7 @@ impl RetryPolicy {
 
 pub struct WorkState {
     items: HashMap<RecordId, WorkItemState>,
+    ready: FifoReadyQueue,
     retry_policy: RetryPolicy,
 }
 
@@ -103,6 +103,7 @@ impl WorkState {
     pub fn new() -> Self {
         Self {
             items: HashMap::new(),
+            ready: FifoReadyQueue::new(),
             retry_policy: RetryPolicy::default(),
         }
     }
