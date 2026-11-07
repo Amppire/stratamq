@@ -287,55 +287,26 @@ impl WorkState {
             }),
         }
     }
-    pub fn nack(&mut self, lease: Lease, now: u64, retry_delay: u64) -> Result<(), WorkError> {
+    pub fn nack(&mut self, lease: Lease, now: u64) -> Result<(), WorkError> {
         let state = self
             .items
             .get_mut(&lease.record_id)
             .ok_or(WorkError::NotLeased {
                 record_id: lease.record_id,
             })?;
-        match state.status {
-            WorkStatus::Complete | WorkStatus::DeadLettered => {
-                Err(WorkError::AlreadyCompletedOrDeadLettered {
-                    record_id: lease.record_id,
-                })
-            }
-            WorkStatus::Leased {
-                lease_id,
-                generation,
-                expires_at,
-                ..
-            } => {
-                if lease_id != lease.lease_id {
-                    return Err(WorkError::LeaseMismatch {
-                        record_id: lease.record_id,
-                        lease_id: lease.lease_id,
-                    });
-                }
-                if generation != lease.generation {
-                    return Err(WorkError::StaleGeneration {
-                        record_id: lease.record_id,
-                        current_generation: generation,
-                        provided_generation: lease.generation,
-                    });
-                }
-                if expires_at < now {
-                    return Err(WorkError::LeaseExpired {
-                        record_id: lease.record_id,
-                        current_time: now,
-                        lease_expiration: expires_at,
-                    });
-                }
-                state.status = WorkStatus::RetryWait {
-                    available_at: now.saturating_add(retry_delay),
-                    generation: state.generation,
-                };
-                Ok(())
-            }
-            _ => Err(WorkError::NotLeased {
-                record_id: lease.record_id,
-            }),
+        Self::validate_lease(state, lease, now)?;
+        if state.delivery_attempts >= self.retry_policy.max_attempts {
+            state.status = WorkStatus::DeadLettered;
+            return Ok(());
         }
+        let retry_delay = self
+            .retry_policy
+            .delay_for_attempt(state.delivery_attempts);
+        state.status = WorkStatus::RetryWait {
+            available_at: now.saturating_add(retry_delay),
+            generation: state.generation,
+        };
+        Ok(())
     }
     pub fn expire_leases(&mut self, now: u64) {
         for state in self.items.values_mut() {
