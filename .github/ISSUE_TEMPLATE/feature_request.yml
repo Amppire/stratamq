@@ -1,0 +1,55 @@
+name: Feature / Architecture Proposal
+description: Propose a new capability, storage class, protocol opcode, or architectural enhancement.
+title: "Feature: "
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to propose new features or modifications to the StrataMQ architecture. Substantial changes may require an Architecture Decision Record (ADR).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What limitation, workload, or use case motivates this proposal?
+      placeholder: Describe the problem or operational bottleneck...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Solution & Design
+      description: Describe your proposed design, API shapes, or protocol modifications.
+      placeholder: |
+        Describe the architecture, new types, or data flow...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: plane_impact
+    attributes:
+      label: Architectural Plane Impact
+      description: How does this proposal interact with the Record Plane vs State Plane separation?
+      options:
+        - "Preserves strict Record Plane vs State Plane separation"
+        - "Extends State Plane (subscription execution, delivery mode, or timer logic)"
+        - "Extends Record Plane (batch format, codec, or storage tiering)"
+        - "Modifies Wire Protocol (NMP Draft 0 opcodes / framing)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches or existing industry patterns did you consider?
+      placeholder: Alternative options evaluated and why they were not chosen...
+
+  - type: textarea
+    id: adr_requirement
+    attributes:
+      label: Architecture Decision Record (ADR) Alignment
+      description: Does this proposal require a new ADR in `docs/adr/` or impact an existing one?
+      placeholder: e.g. Requires new experimental ADR or extends ADR-003

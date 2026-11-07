@@ -1,6 +1,10 @@
 [package]
-name = "record"
-version = "0.1.0"
-edition = "2024"
+name = "strata-record"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
+bytes.workspace = true
+serde.workspace = true
+strata-types = { path = "../types" }

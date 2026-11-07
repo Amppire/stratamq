@@ -1,14 +1,17 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+#![forbid(unsafe_code)]
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+mod broadcast;
+mod error;
+mod keyed;
+mod ready_queue;
+mod stream;
+mod subscription;
+mod work;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use broadcast::*;
+pub use error::*;
+pub use keyed::*;
+pub use ready_queue::*;
+pub use stream::*;
+pub use subscription::*;
+pub use work::*;
