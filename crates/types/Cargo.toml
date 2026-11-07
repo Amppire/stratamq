@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Exposes test helpers such as `MockClock` to other crates' tests.
+# Enable only from `[dev-dependencies]`, never in production builds.
+test-utils = []
+
 [dependencies]
 serde.workspace = true
 uuid.workspace = true
