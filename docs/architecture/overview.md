@@ -1,29 +1,58 @@
 # StrataMQ Architecture Overview
 
-StrataMQ is structured as a layered message broker and event-streaming engine. It decouples append-only log ingestion from message consumption topologies, allowing the same underlying journal to be read sequentially as a stream or processed concurrently as a distributed work queue.
+**Unified Event Streaming and Reliable Messaging Engine**  
+*Architecture Baseline: November 2026*
 
 ---
 
-## 1. System Layers
+## 1. System Philosophy & Dual-Plane Architecture
+
+StrataMQ collapses the traditional division between event streaming logs (e.g. Kafka) and message queues (e.g. RabbitMQ). Instead of forcing queue emulations on a log or layering logs on a queue, StrataMQ decouples the system into two independent planes:
+
+```
+RECORD PLANE (Immutable Data)
+┌────────────────────────────────────────────────────────────────────────┐
+│ Journal ──> Record Batches (v0) ──> Segments ──> Retention / S3 Tier   │
+└────────────────────────────────────┬───────────────────────────────────┘
+                                     │ Shared Records
+STATE PLANE (Mutable Consumption)    │ (Zero Payload Duplication)
+┌────────────────────────────────────▼───────────────────────────────────┐
+│ Subscription                                                           │
+│   ├── Stream Mode: Cursor Offsets, Checkpoints, Historical Seek        │
+│   ├── Work Mode: Leased Work Items, Generation Fencing, Retries, DLQ   │
+│   ├── Keyed Mode: Per-Key Sequential Dispatch, Hotspot Isolation       │
+│   ├── Broadcast Mode: Independent Per-Subscriber Observation Cursors   │
+│   └── Replay Branches: Isolated Historical Investigation Tracks        │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Record Plane**: Stores immutable published record batches. Committed payloads and metadata are permanent and never deleted or mutated upon consumer acknowledgment.
+- **State Plane**: Stores subscription-specific consumer cursors, leases, retry counters, and dead-letter statuses.
+
+---
+
+## 2. Layered Crate Architecture
+
+The StrataMQ codebase is organized into modular, single-responsibility Rust crates adhering strictly to `#![forbid(unsafe_code)]` in all core domain logic:
 
 ```mermaid
 graph TD
-    subgraph Client & Networking
-        CLI[Operator CLI]
-        Server[Broker Server Daemon]
-        Protocol[Protocol Core / Frame Codecs]
+    subgraph Ingress & Networking
+        CLI[Operator CLI: crates/cli]
+        Server[Broker Daemon: crates/server]
+        Protocol[Protocol Core & NMP Codec: crates/protocol-core]
     end
 
-    subgraph Coordination & Routing
-        Sharding[Sharding & Partition Coordinator]
-        Subscription[Subscription Engine]
+    subgraph Topology & Consumption
+        Sharding[Virtual Sharding & Placement: crates/sharding]
+        Subscription[Subscription Engine: crates/subscription]
     end
 
-    subgraph Storage & Journaling
-        Journal[Strata Journal / Append Log]
-        StorageCore[Storage Engine / WAL / Segments]
-        Record[Strata Record Models]
-        Types[Strata Types / UUIDv7 IDs]
+    subgraph Core Engine & Storage
+        Journal[Strata Journal: crates/journal]
+        StorageCore[Storage Engine & WAL/Object: crates/storage-core]
+        Record[Record & Batch Models: crates/record]
+        Types[UUIDv7 Domain IDs: crates/types]
     end
 
     CLI --> Server
@@ -32,39 +61,29 @@ graph TD
     Server --> Sharding
     Sharding --> Journal
     Subscription --> Journal
+    Journal --> StorageCore
     Journal --> Record
     Record --> Types
-    Journal --> StorageCore
 ```
 
-### Layer Descriptions
-
-1. **Foundational Types (`strata-types`)**:
-   - Centralizes domain identity via strongly-typed newtype wrappers around UUIDv7.
-   - Eliminates primitive obsession (`RecordId` cannot be confused with `ConsumerId` or `JournalId`).
-   - Ensures natural chronological order (k-sortable) across records and transactions.
-
-2. **Record Models (`strata-record`)**:
-   - Defines `ProposedRecord` (uncommitted client intent) and `Record` (immutable committed entry).
-   - Records contain timestamps, optional subjects, revisions, partition keys, structured headers, and payload bytes.
-
-3. **Journal Engine (`strata-journal`)**:
-   - Maintains an append-only sequence of committed records.
-   - Tracks per-subject monotonic revisions (`revisions: HashMap<Subject, u64>`).
-   - Evaluates `ExpectedRevision` checks atomically prior to writing to the log.
-
-4. **Subscription Engine (`strata-subscription`)**:
-   - Manages consumer state machines on top of the journal.
-   - Provides multiple delivery semantics: Stream, Work Queue, Keyed Work, and Broadcast.
-
-5. **Storage, Networking, and Clustering (`storage-core`, `protocol-core`, `server`, `sharding`)**:
-   - Manages physical persistence, wire serialization, TCP/multiplexing, and cluster partition distribution.
+### Layer Roles
+1. **[`crates/types`](file:///Users/harisrovca/Documents/Workspaces/stratamq/crates/types/src/lib.rs) (`strata-types`)**: Strongly-typed newtype wrappers around UUIDv7 (`RecordId`, `JournalId`, `SubscriptionId`, `ConsumerId`, `ProducerId`, `LeaseId`). Provides k-sortable chronological ordering and zero coordination overhead.
+2. **[`crates/record`](file:///Users/harisrovca/Documents/Workspaces/stratamq/crates/record/src/lib.rs) (`strata-record`)**: Models for `ProposedRecord` (uncommitted) and immutable `Record`, as well as `RecordBatchV0` binary encoding.
+3. **[`crates/journal`](file:///Users/harisrovca/Documents/Workspaces/stratamq/crates/journal/src/lib.rs) (`strata-journal`)**: In-memory and storage-backed append log with per-subject revision tracking and optimistic concurrency control (`ExpectedRevision`).
+4. **[`crates/subscription`](file:///Users/harisrovca/Documents/Workspaces/stratamq/crates/subscription/src/lib.rs) (`strata-subscription`)**: State machines for Stream, Work, Keyed, and Broadcast consumption modes.
+5. **[`crates/protocol-core`](file:///Users/harisrovca/Documents/Workspaces/stratamq/crates/protocol-core/src/lib.rs)**: Native Messaging Protocol (NMP) binary framing, opcodes, and demand-window bookkeeping.
+6. **[`crates/storage-core`](file:///Users/harisrovca/Documents/Workspaces/stratamq/crates/storage-core/src/lib.rs)**: Storage engine traits, local WAL, segment compaction, and S3-compatible tiering.
+7. **[`crates/sharding`](file:///Users/harisrovca/Documents/Workspaces/stratamq/crates/sharding/src/lib.rs)**: Virtual shard hashing (rendezvous hashing) and storage-group placement.
+8. **[`crates/bench`](file:///Users/harisrovca/Documents/Workspaces/stratamq/crates/bench/src/lib.rs)**: Architecture tournament harnesses and HDR latency samplers.
+9. **[`crates/server`](file:///Users/harisrovca/Documents/Workspaces/stratamq/crates/server/src/main.rs)** & **[`crates/cli`](file:///Users/harisrovca/Documents/Workspaces/stratamq/crates/cli/src/main.rs)**: Standalone broker daemon and operator CLI.
 
 ---
 
-## 2. Ingestion & Optimistic Concurrency Control
+## 3. Ingestion & Optimistic Concurrency Control (OCC)
 
-When a producer writes to a subject (e.g. `orders.1234`), concurrent writes must be safe against out-of-order execution or duplicate processing. StrataMQ provides subject-scoped optimistic concurrency control (OCC).
+Each record appended to a Journal may optionally belong to a `Subject` (e.g. `orders.1234`). When a subject is specified, StrataMQ assigns a monotonically increasing revision number scoped strictly to that subject.
+
+Producers can specify an `ExpectedRevision` to perform atomic conditional updates without distributed locks:
 
 ```mermaid
 sequenceDiagram
@@ -79,17 +98,17 @@ sequenceDiagram
         alt Subject exists
             Journal-->>Producer: Err(RevisionMismatch)
         else Subject does not exist
-            Journal->>Journal: assign revision 0
+            Journal->>Journal: commit revision 0
         end
     else ExpectedRevision::Exact(N)
         Journal->>Index: check current_revision(subject)
         alt Revision == N
-            Journal->>Journal: assign revision N + 1
+            Journal->>Journal: commit revision N + 1
         else Revision != N
             Journal-->>Producer: Err(RevisionMismatch)
         end
     else ExpectedRevision::Any
-        Journal->>Journal: assign next revision (or None if no subject)
+        Journal->>Journal: commit next revision (or None if unsubjected)
     end
     Journal->>Index: update subject revision
     Journal-->>Producer: Ok(AppendResult { position, revision })
@@ -97,60 +116,98 @@ sequenceDiagram
 
 ---
 
-## 3. Subscription Topologies
-
-StrataMQ provides flexible consumption semantics without duplicating records:
-
-### 3.1. Stream Mode (`StreamState`)
-- **Semantics**: Sequential, ordered, replayable cursor.
-- **State**: Tracks `committed_position` and `next_position`.
-- **Operations**:
-  - `fetch(journal, max)`: Retrieves sequential records and advances `next_position`.
-  - `commit()`: Advances `committed_position` to `next_position`.
-  - `reset_to_committed()`: Discards uncommitted progress on transient failure.
-  - `seek(position)`: Repositions cursor to arbitrary historical offset for log replay.
-
-### 3.2. Work Queue Mode (`WorkState`)
-- **Semantics**: Competing consumers with exclusive, time-bounded leases.
-- **State Machine**:
+## 4. Multi-Modal Subscriptions
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Ready: register(record_id)
-    Ready --> Leased: acquire(consumer_id, lease_duration)
-    Leased --> Leased: extend_lease(extension)
-    Leased --> Complete: ack()
-    Leased --> RetryWait: nack() / retry available
-    Leased --> Ready: expire_leases(now)
-    RetryWait --> Ready: promote_retries(now)
-    Leased --> DeadLettered: nack() / max attempts exceeded
+classDiagram
+    class Subscription {
+        +SubscriptionId id
+        +JournalId journal_id
+        +SubscriptionMode mode
+    }
+    class StreamState {
+        +u64 committed_position
+        +u64 next_position
+        +fetch(journal, max)
+        +commit()
+        +seek(pos)
+    }
+    class WorkState {
+        +acquire(consumer, now, duration, max)
+        +ack(lease, now)
+        +nack(lease, now)
+        +extend_lease(lease, now, ext)
+        +expire_leases(now)
+        +promote_retries(now)
+    }
+    class KeyedWorkState {
+        +register(record_id, key)
+        +complete(record_id)
+    }
+    class BroadcastState {
+        +StreamState stream
+    }
+
+    Subscription --> StreamState
+    Subscription --> WorkState
+    Subscription --> KeyedWorkState
+    Subscription --> BroadcastState
 ```
 
-- **Fencing & Generation Counters**:
-  - Each time a work item is leased, its `generation` increments.
-  - If a worker becomes unresponsive (network partition, GC pause), its lease expires and another worker acquires the item with a higher generation number.
-  - Any subsequent `ack`, `nack`, or `extend` from the original worker is rejected with `StaleGeneration` or `LeaseExpired`, preventing split-brain writes.
+### 4.1. Stream Mode (`StreamState`)
+Provides linear sequential consumption with durable cursor checkpointing (`commit()`), uncommitted rollbacks (`reset_to_committed()`), and arbitrary historical replays (`seek()`).
 
-### 3.3. Keyed Work Mode (`KeyedWorkState`)
-- **Semantics**: Strict FIFO per partition key, concurrent across different keys.
-- **Mechanism**:
-  - If key `K` is active (in-flight lease), subsequent records with key `K` are enqueued into a pending queue for `K`.
-  - Once the active lease for `K` completes (`ack`), the next pending record for `K` is automatically promoted to the global ready queue.
-  - Guarantees strict ordering per entity without requiring a single worker for all traffic.
+### 4.2. Work Mode (`WorkState`)
+Provides competing consumer delivery with exclusive, time-bounded leases:
+- **Generation Fencing**: Every redelivery increments the item's `generation`. Stale worker acknowledgments fail deterministically with `WorkError::StaleGeneration`.
+- **Heartbeat Extensions**: Long tasks renew active leases via `extend_lease` without generation bumps.
+- **Configurable Retries**: Supports `Immediate`, `Fixed`, and `Exponential` backoff.
+- **Dead-Letter State**: Records that exceed `max_attempts` transition to `WorkStatus::DeadLettered` without payload copying.
 
-### 3.4. Broadcast Mode (`BroadcastState`)
-- **Semantics**: Fanout messaging where every consumer group receives a full, independent copy of the stream.
-- Implemented as distinct `StreamState` cursors over the shared journal.
+### 4.3. Keyed Work Mode (`KeyedWorkState`)
+Guarantees strictly serial delivery for records bearing the same partition key. While one record for key $K$ is actively leased by a consumer, subsequent records for $K$ are queued in `pending_by_key`. Unrelated keys execute concurrently.
+
+### 4.4. Broadcast Mode (`BroadcastState`)
+Enables independent pub/sub fanout. Each subscriber advances an isolated stream cursor over the shared journal records without duplicating payloads.
 
 ---
 
-## 4. Safety & Invariants
+## 5. Native Messaging Protocol (NMP) & Demand Windows
 
-1. **`#![forbid(unsafe_code)]`**:
-   Zero `unsafe` blocks are permitted in core crates (`strata-types`, `strata-record`, `strata-journal`, `strata-subscription`). Memory safety and data race freedom are guaranteed at compile time.
-2. **Immutability of Committed Records**:
-   Once committed to the Journal, a `Record` is completely immutable.
-3. **Monotonicity**:
-   Subject revisions monotonically increment from 0 onward without gaps or rollbacks.
-4. **Time Safety**:
-   Timestamp calculations use saturated arithmetic (`saturating_add`, `saturating_mul`, `saturating_sub`) to eliminate integer overflow vulnerabilities in lease and retry math.
+NMP is a binary multiplexed wire protocol designed specifically for StrataMQ.
+
+### Receiver-Authorized Demand Windows
+Rather than forcing a binary choice between push and pull, NMP uses receiver-authorized **Demand Windows**:
+- Consumer authorizes a delivery budget: `DEMAND { max_records: 128, max_bytes: 16MiB, deadline_ms: 500, continuous: true }`.
+- Broker delivers batches (`DELIVER_BATCH`) up to the authorized budget.
+- Consumer replenishes credits with `WINDOW_UPDATE`.
+- If credits reach zero, delivery stops immediately, bounding broker and client memory under all load conditions.
+
+---
+
+## 6. Sharding and Storage Architecture
+
+### Virtual Sharding (Hiding Physical Topology)
+- Clients never see physical partition IDs.
+- Record keys hash into **65,536 or 262,144 virtual shards**.
+- Virtual shards are mapped onto a smaller set of **Storage Groups** using rendezvous hashing.
+- Rebalancing moves virtual shards between storage groups without changing record IDs or client code.
+
+### Storage Classes & Durability Profiles
+Configurable per journal:
+1. `low-latency`: Replicated NVMe WAL + local segments (sub-millisecond work queues).
+2. `balanced`: Durable WAL + asynchronous object storage upload to S3 (default for mixed workloads).
+3. `economical`: Object-primary streaming for high-retention telemetry and cold audit logs.
+
+---
+
+## 7. Mixed-Workload Resource Isolation
+
+To allow heavy historical replays and segment compaction to coexist with latency-sensitive work queues, the broker enforces five priority classes:
+1. `critical`: Commit path, heartbeats, durable metadata.
+2. `interactive`: Work queue acquisition and acknowledgments.
+3. `normal`: Streaming consumption.
+4. `background`: Segment compaction, object storage uploads.
+5. `recovery`: Replica catch-up and snapshot restore.
+
+Resource budgets ensure interactive delivery maintains $p99 < 2\times$ baseline even while background maintenance is saturated.

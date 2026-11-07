@@ -4,44 +4,50 @@
 [![Rust Edition](https://img.shields.io/badge/rust-2024%20edition-orange.svg)](rust-toolchain.toml)
 [![Safety](https://img.shields.io/badge/unsafe-forbidden-success.svg)](crates/)
 
-**StrataMQ** is a high-performance, modular message queuing and event-streaming engine engineered in Rust. It combines the predictable sequential access of append-only logs with rich subscription semantics—supporting streaming event logs, competing worker queues with fenced leases, keyed serial dispatch, and broadcast fanout within a unified architecture.
+**StrataMQ** is a unified, high-performance distributed message broker and event-streaming engine engineered in Rust. It eliminates the dual-system operational overhead of running separate streaming platforms (e.g. Kafka) and task queues (e.g. RabbitMQ) by decoupling **immutable log storage** from **multi-modal subscription state**.
 
 ---
 
-## Key Features
+## Core Differentiators
 
-- **Strict Memory Safety**: Core domain and subscription logic enforce `#![forbid(unsafe_code)]`.
-- **Append-Only Journaling**: Fast sequential appends with global log ordering and per-subject revision tracking.
-- **Optimistic Concurrency Control (OCC)**: Conditional writes using `ExpectedRevision` (`Any`, `Exact(u64)`, `NoSubject`) to eliminate write anomalies and race conditions.
+- **Dual-Plane Architecture**:
+  - **Record Plane**: High-throughput, append-only log batches with per-subject monotonic revisions and tiered storage.
+  - **State Plane**: Subscription-specific execution state machines managing cursors, generation-fenced leases, retries, and dead-letter queues over shared records without payload duplication.
+- **Optimistic Concurrency Control (OCC)**: Fine-grained aggregate consistency via `ExpectedRevision` (`Any`, `Exact(u64)`, `NoSubject`), enabling native event-sourcing without distributed locks.
 - **Multi-Modal Subscriptions**:
-  - **Stream**: Linear cursor-based consumption, seek operations, commit markers, and historical log replay.
-  - **Work Queue**: Competing consumer model with generation-fenced leases, heartbeat extensions, configurable retries (Immediate, Fixed, Exponential Backoff), and Dead-Letter Queue (DLQ) support.
-  - **Keyed Work Queue**: Guaranteed per-key message sequencing that allows concurrent execution across distinct keys without head-of-line blocking.
-  - **Broadcast**: Independent stream cursors for pub/sub fanout.
-- **K-Sortable UUIDv7 Identifiers**: Strongly-typed newtypes (`RecordId`, `JournalId`, `SubscriptionId`, `ConsumerId`, `ProducerId`, `LeaseId`) providing time-ordered locality and zero collision probability.
+  - **Stream**: Sequential cursor tracking, commits, rollbacks, and historical log replay.
+  - **Work Queue**: Competing consumers with generation-fenced leases, heartbeat extensions, configurable retry schedules, and non-duplicating DLQ.
+  - **Keyed Work Queue**: Strictly ordered, serial delivery per key with concurrent execution across distinct keys.
+  - **Broadcast**: Independent pub/sub fanout cursors over shared records.
+- **Native Messaging Protocol (NMP)**: Binary, multiplexed protocol driven by receiver-authorized **Demand Windows** (`max_records`, `max_bytes`, `continuous`), unifying push and pull semantics under bounded backpressure.
+- **Virtual Sharding**: Application-visible partition counts are eliminated; keys hash into a stable virtual shard namespace mapped to physical storage groups.
+- **Strict Memory Safety**: Core domain, journal, and subscription crates enforce `#![forbid(unsafe_code)]`.
+- **K-Sortable UUIDv7 Domain Types**: Strongly-typed newtype wrappers (`RecordId`, `JournalId`, `SubscriptionId`, `ConsumerId`, `ProducerId`, `LeaseId`).
 
 ---
 
 ## Workspace Architecture
 
-StrataMQ is organized as a Cargo workspace with decoupled, single-responsibility crates:
+StrataMQ is structured as a decoupled Cargo workspace:
 
 ```
 stratamq/
 ├── crates/
-│   ├── types/           # Core domain newtypes and UUIDv7 identifiers
-│   ├── record/          # Immutable Record and ProposedRecord data models
-│   ├── journal/         # Append-only journal with subject-scoped revision checks
-│   ├── subscription/    # Stream, Work, Keyed, and Broadcast consumption engines
-│   ├── storage-core/    # Storage engine abstractions and persistence interfaces (WIP)
-│   ├── sharding/        # Partitioning and distributed clustering coordinator (WIP)
-│   ├── protocol-core/   # Binary wire protocol framing and codec (WIP)
-│   ├── server/          # Broker runtime and service daemon (WIP)
-│   ├── cli/             # Operator CLI for cluster and topic management (WIP)
-│   └── bench/           # Benchmark scenarios and performance harnesses
+│   ├── types/           # Strongly-typed domain UUIDv7 identifiers
+│   ├── record/          # Immutable Record, ProposedRecord, and RecordBatch models
+│   ├── journal/         # Append log with subject-scoped monotonic revisions & OCC
+│   ├── subscription/    # Stream, Work, Keyed, and Broadcast state engines
+│   ├── storage-core/    # Storage engine abstractions, WAL, and S3 tiering (P0 Tournament)
+│   ├── sharding/        # Virtual sharding, placement, and rendezvous hashing (P0 Tournament)
+│   ├── protocol-core/   # Native Messaging Protocol (NMP Draft 0) codecs & frames
+│   ├── bench/           # Benchmark scenarios, tournament harnesses, and HDR latency samplers
+│   ├── server/          # Broker daemon runtime (TCP/QUIC)
+│   └── cli/             # Operator CLI for inspection and management
 └── docs/
-    ├── architecture/    # Detailed system design documents
-    └── adr/             # Architecture Decision Records
+    ├── architecture/    # Architecture Charter, Implementation Plan, NMP Spec, System Overview
+    ├── adr/             # Architecture Decision Register (Foundational, P0, Planned)
+    ├── DEVELOPMENT.md   # Developer standards, quality assurance, and verification guide
+    └── roadmap.md       # Implementation status across phases P0 to v1
 ```
 
 ### Crate Overview
@@ -52,12 +58,28 @@ stratamq/
 | [`crates/record`](crates/record) | `strata-record` | Active | `Record` data model, `Subject` wrapper, and builder-style `ProposedRecord` |
 | [`crates/journal`](crates/journal) | `strata-journal` | Active | In-memory append journal with `ExpectedRevision` OCC validation |
 | [`crates/subscription`](crates/subscription) | `strata-subscription` | Active | Subscription state machines: `StreamState`, `WorkState`, `KeyedWorkState` |
-| [`crates/storage-core`](crates/storage-core) | `storage-core` | Planned | Disk persistence layer, segment files, WAL, and index structures |
-| [`crates/sharding`](crates/sharding) | `sharding` | Planned | Partition distribution, consistent hashing, and cluster coordination |
-| [`crates/protocol-core`](crates/protocol-core) | `protocol-core` | Planned | Network frame serialization, deserialization, and protocol codecs |
-| [`crates/server`](crates/server) | `server` | Planned | Network listener, connection lifecycle, and request routing |
-| [`crates/cli`](crates/cli) | `cli` | Planned | Management CLI for managing subscriptions, topics, and metrics |
-| [`crates/bench`](crates/bench) | `bench` | Planned | End-to-end and micro-benchmarks for latency and throughput |
+| [`crates/protocol-core`](crates/protocol-core) | `protocol-core` | In Progress | NMP Draft 0 binary framing, demand-window accounting, and batch codecs |
+| [`crates/storage-core`](crates/storage-core) | `storage-core` | Planned | Storage traits, WAL append, segment compaction, and object tiering |
+| [`crates/sharding`](crates/sharding) | `sharding` | Planned | Virtual shard rendezvous placement and dynamic rebalancing |
+| [`crates/bench`](crates/bench) | `bench` | Planned | Architecture tournament harnesses and failure-injection tests |
+| [`crates/server`](crates/server) | `server` | Planned | Standalone broker daemon and network listeners |
+| [`crates/cli`](crates/cli) | `cli` | Planned | Operator CLI for inspection and cluster management |
+
+---
+
+## Documentation Index
+
+Comprehensive engineering specifications and design records are located in [`docs/`](docs/):
+
+- **[Product & Architecture Charter](docs/architecture/charter.md)**: Foundational thesis, market positioning, architectural invariants, non-goals, and quality attributes.
+- **[Implementation Plan](docs/architecture/implementation-plan.md)**: Comprehensive roadmap from P0 research to v1 GA, subsystem specifications, operational semantics, and risk analysis.
+- **[P0 Technical Specification](docs/architecture/p0-spec.md)**: Research tournament designs for sharding, storage, transport, delivery, and mixed-workload isolation.
+- **[Native Messaging Protocol (NMP) — Draft 0](docs/architecture/nmp-draft-0.md)**: Canonical wire protocol specification, binary framing, opcode registry, and demand windows.
+- **[Architecture Decision Register (ADR)](docs/adr/README.md)**: Authoritative index of foundational, experimental (P0), and planned architectural decisions.
+- **[System Architecture Overview](docs/architecture/overview.md)**: Detailed technical dive into the dual-plane model, OCC sequence, and consumption engines.
+- **[Development Guide](docs/DEVELOPMENT.md)**: Coding conventions, property testing guidelines, fuzzing, and verification standards.
+- **[Delivery Roadmap & Status](docs/roadmap.md)**: Live progress tracking and checklist for P0 exit and P1 transition.
+- **[Dual-Workstream Coordination Plan](docs/COORDINATION.md)**: Parallel work breakdown, shared integration contracts, ownership matrix, and task tracking for two developers.
 
 ---
 
@@ -65,7 +87,7 @@ stratamq/
 
 ### Prerequisites
 
-- **Rust**: Rust toolchain supporting the **2024 Edition** (channel specified in [`rust-toolchain.toml`](rust-toolchain.toml)).
+- **Rust**: Toolchain supporting **Rust 2024 Edition** (channel configured in [`rust-toolchain.toml`](rust-toolchain.toml)).
 - Cargo components: `clippy` and `rustfmt`.
 
 Verify your installation:
@@ -85,32 +107,24 @@ cargo build --workspace
 
 ## Testing & Quality Assurance
 
-StrataMQ maintains strict code quality and linting standards. Before submitting changes, verify that the workspace passes both Clippy with warnings denied and the full test suite.
+StrataMQ enforces a zero-warning policy on Clippy and requires all tests to pass.
 
 ### Run Lint Checks
 
-Ensure there are zero warnings across all workspace crates and targets:
 ```bash
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 ### Run Tests
 
-Execute unit and integration tests across the entire workspace:
 ```bash
 cargo test --workspace
 ```
 
 ### Code Formatting
 
-Check formatting compliance:
 ```bash
 cargo fmt --all -- --check
-```
-
-Format code automatically:
-```bash
-cargo fmt --all
 ```
 
 ---
@@ -127,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut journal = Journal::new();
     let orders_subject = Subject::new("orders.us-east");
 
-    // Append the initial record expecting no prior revisions
+    // Append initial record expecting no prior revisions
     let proposed = ProposedRecord::new("order-1001-created")
         .with_subject(orders_subject.clone())
         .with_header("content-type", "application/json");
@@ -180,10 +194,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### 3. Competing Worker Queue with Leases
+### 3. Competing Worker Queue with Generation-Fenced Leases
 
 ```rust
-use strata_subscription::{FifoReadyQueue, Lease, RetryDelay, RetryPolicy, WorkState};
+use strata_subscription::{Lease, RetryDelay, RetryPolicy, WorkState};
 use strata_types::{ConsumerId, RecordId};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -205,7 +219,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(leases.len(), 1);
     let lease = leases[0];
 
-    // Worker extends lease during long processing
+    // Worker extends lease during long-running processing
     let extended_lease = work_state.extend_lease(lease, 2_000, 3_000)?;
 
     // Acknowledge upon successful completion
@@ -214,19 +228,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
-
----
-
-## Documentation
-
-Comprehensive design guides and architecture documentation are located in [`docs/`](docs/):
-
-- **[System Architecture](docs/architecture/overview.md)**: Deep dive into the layered architecture, storage model, concurrency patterns, and subscription state machines.
-- **[Development Guide](docs/DEVELOPMENT.md)**: Developer standards, coding conventions, testing guidelines, and workflow practices.
-- **Architecture Decision Records (ADRs)**:
-  - [ADR 0001: UUIDv7 for Domain Entity Identifiers](docs/adr/0001-uuidv7-for-entity-identifiers.md)
-  - [ADR 0002: Optimistic Concurrency with Subject Revisions](docs/adr/0002-optimistic-concurrency-and-subject-revisions.md)
-  - [ADR 0003: Fenced Leases and Heartbeats for Work Queues](docs/adr/0003-fenced-leases-for-work-queues.md)
 
 ---
 
