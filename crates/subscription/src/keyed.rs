@@ -2,7 +2,7 @@ use bytes::Bytes;
 use std::collections::{HashMap, VecDeque};
 
 use crate::{RetryPolicy, WorkState};
-use veyra_types::RecordId;
+use strata_types::RecordId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WorkKey(Bytes);
@@ -34,7 +34,8 @@ impl KeyedWorkState {
 
     pub fn register(&mut self, record_id: RecordId, key: WorkKey) {
         self.record_keys.insert(record_id, key.clone());
-        if !self.active_by_key.contains_key(&key) {
+        let is_active = self.active_by_key.contains_key(&key);
+        if !is_active {
             self.active_by_key.insert(key, record_id);
             self.work.register(record_id);
             return;
