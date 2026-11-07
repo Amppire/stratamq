@@ -1,13 +1,10 @@
 #![forbid(unsafe_code)]
 
-use std::{
-    collections::HashMap,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 
 use strata_record::{ProposedRecord, Record, Subject};
-use strata_types::JournalId;
+use strata_types::{Clock, JournalId, SystemClock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedRevision {
@@ -25,8 +22,6 @@ pub enum AppendError {
     },
     #[error("Revisions cannot be used for records without a subject")]
     RevisionWithoutSubject,
-    #[error("System time is before the UNIX epoch")]
-    InvalidSystemTime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,19 +29,34 @@ pub struct AppendResult {
     pub revision: Option<u64>,
     pub position: u64,
 }
+
 pub struct Journal {
     id: JournalId,
     records: Vec<Record>,
     revisions: HashMap<Subject, u64>,
+    clock: Arc<dyn Clock>,
+    /// Timestamp of the most recent record; record timestamps never go below it.
+    last_timestamp: u64,
 }
 
 impl Journal {
+    /// Creates a journal that timestamps records with the system clock.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_clock(Arc::new(SystemClock))
+    }
+
+    /// Creates a journal that timestamps records with the given clock.
+    ///
+    /// Pass a shared `Arc` to let other components read the same clock.
+    #[must_use]
+    pub fn with_clock(clock: Arc<dyn Clock>) -> Self {
         Self {
             id: JournalId::new(),
             records: Vec::new(),
             revisions: HashMap::new(),
+            clock,
+            last_timestamp: 0,
         }
     }
 
@@ -97,10 +107,12 @@ impl Journal {
                 None
             }
         };
-        let timestamp = current_timestamp()?;
+        // Clamp so record timestamps never go backwards, even if the clock does.
+        let timestamp = self.clock.now_millis().max(self.last_timestamp);
         let record = proposed.commit(timestamp, next_revision);
         let position = self.records.len() as u64;
         self.records.push(record);
+        self.last_timestamp = timestamp;
         if let (Some(subject), Some(revision)) = (subject, next_revision) {
             self.revisions.insert(subject, revision);
         }
@@ -147,22 +159,76 @@ impl Default for Journal {
     }
 }
 
-fn current_timestamp() -> Result<u64, AppendError> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| AppendError::InvalidSystemTime)?;
-    Ok(now.as_millis() as u64)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use strata_types::MockClock;
 
     fn subject(name: &str) -> Subject {
         Subject::new(name)
     }
     fn proposed(subject_name: &str) -> ProposedRecord {
         ProposedRecord::new("payload").with_subject(subject(subject_name))
+    }
+    fn mock_journal(initial_millis: u64) -> (Journal, MockClock) {
+        let clock = MockClock::new(initial_millis);
+        let journal = Journal::with_clock(Arc::new(clock.clone()));
+        (journal, clock)
+    }
+    fn timestamp_at(journal: &Journal, position: usize) -> u64 {
+        journal.get(position).unwrap().timestamp()
+    }
+
+    #[test]
+    fn mock_clock_assigns_deterministic_timestamp() {
+        let (mut journal, _clock) = mock_journal(1_000);
+        journal
+            .append(ProposedRecord::new("payload"), ExpectedRevision::Any)
+            .unwrap();
+        assert_eq!(timestamp_at(&journal, 0), 1_000);
+    }
+
+    #[test]
+    fn advancing_mock_clock_reflects_on_next_append() {
+        let (mut journal, clock) = mock_journal(1_000);
+        journal
+            .append(ProposedRecord::new("first"), ExpectedRevision::Any)
+            .unwrap();
+        clock.advance_millis(5_000);
+        journal
+            .append(ProposedRecord::new("second"), ExpectedRevision::Any)
+            .unwrap();
+        assert_eq!(timestamp_at(&journal, 0), 1_000);
+        assert_eq!(timestamp_at(&journal, 1), 6_000);
+    }
+
+    #[test]
+    fn timestamps_never_go_backwards() {
+        let (mut journal, clock) = mock_journal(10_000);
+        journal
+            .append(ProposedRecord::new("first"), ExpectedRevision::Any)
+            .unwrap();
+        clock.set_millis(4_000);
+        journal
+            .append(ProposedRecord::new("second"), ExpectedRevision::Any)
+            .unwrap();
+        assert_eq!(timestamp_at(&journal, 1), 10_000);
+    }
+
+    #[test]
+    fn rejected_append_does_not_move_timestamp() {
+        let (mut journal, clock) = mock_journal(1_000);
+        journal
+            .append(proposed("subject"), ExpectedRevision::NoSubject)
+            .unwrap();
+        clock.set_millis(9_000);
+        let rejected = journal.append(proposed("subject"), ExpectedRevision::NoSubject);
+        assert!(rejected.is_err());
+        clock.set_millis(2_000);
+        journal
+            .append(proposed("subject"), ExpectedRevision::Exact(0))
+            .unwrap();
+        assert_eq!(timestamp_at(&journal, 1), 2_000);
     }
 
     #[test]
