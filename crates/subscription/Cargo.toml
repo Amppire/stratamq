@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 thiserror.workspace = true
-
+bytes.workspace = true
 strata-journal = { path = "../journal" }
 strata-record = { path = "../record" }
 strata-types = { path = "../types" }

@@ -190,6 +190,7 @@ dependencies = [
 name = "strata-subscription"
 version = "0.0.1"
 dependencies = [
+ "bytes",
  "strata-journal",
  "strata-record",
  "strata-types",
