@@ -8,7 +8,9 @@ pub struct BroadcastState {
 impl BroadcastState {
     #[must_use]
     pub fn new() -> Self {
-        Self { stream: StreamState::new() }
+        Self {
+            stream: StreamState::new(),
+        }
     }
 
     pub fn stream_mut(&mut self) -> &mut StreamState {

@@ -1,6 +1,6 @@
-use thiserror::Error;
-use strata_types::{LeaseId, RecordId};
 use crate::work::Lease;
+use strata_types::{LeaseId, RecordId};
+use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum WorkError {

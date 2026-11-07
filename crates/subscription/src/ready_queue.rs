@@ -52,8 +52,7 @@ mod tests {
         let first = RecordId::new();
         let second = RecordId::new();
 
-        let mut queue =
-            FifoReadyQueue::new();
+        let mut queue = FifoReadyQueue::new();
 
         queue.push(first);
         queue.push(second);

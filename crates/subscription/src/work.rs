@@ -1,6 +1,6 @@
+use crate::{FifoReadyQueue, ReadyQueue, WorkError};
 use std::collections::HashMap;
 use strata_types::{ConsumerId, LeaseId, RecordId};
-use crate::{FifoReadyQueue, ReadyQueue, WorkError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lease {
@@ -108,17 +108,11 @@ impl WorkState {
         }
     }
 
-    pub fn register(
-        &mut self,
-        record_id: RecordId,
-    ) {
+    pub fn register(&mut self, record_id: RecordId) {
         if self.items.contains_key(&record_id) {
             return;
         }
-        self.items.insert(
-            record_id,
-            WorkItemState::default(),
-        );
+        self.items.insert(record_id, WorkItemState::default());
         self.ready.push(record_id);
     }
 
@@ -137,25 +131,25 @@ impl WorkState {
         self.ready.len()
     }
 
-    pub fn acquire(&mut self, journal: &strata_journal::Journal, consumer_id: ConsumerId, now: u64, lease_duration: u64, max_records: usize) -> Vec<Lease> {
+    pub fn acquire(
+        &mut self,
+        journal: &strata_journal::Journal,
+        consumer_id: ConsumerId,
+        now: u64,
+        lease_duration: u64,
+        max_records: usize,
+    ) -> Vec<Lease> {
         let mut leases = Vec::new();
         while leases.len() < max_records {
-            let Some(record_id) =
-                self.ready.pop()
-            else {
+            let Some(record_id) = self.ready.pop() else {
                 break;
             };
 
-            let Some(state) =
-                self.items.get_mut(&record_id)
-            else {
+            let Some(state) = self.items.get_mut(&record_id) else {
                 continue;
             };
 
-            if !matches!(
-                state.status,
-                WorkStatus::Ready
-            ) {
+            if !matches!(state.status, WorkStatus::Ready) {
                 continue;
             }
 
@@ -166,10 +160,10 @@ impl WorkState {
             let expires_at = now.saturating_add(lease_duration);
 
             state.status = WorkStatus::Leased {
-                    lease_id,
-                    consumer_id,
-                    generation: state.generation,
-                    expires_at,
+                lease_id,
+                consumer_id,
+                generation: state.generation,
+                expires_at,
             };
             leases.push(Lease {
                 record_id,
@@ -220,7 +214,10 @@ impl WorkState {
         now: u64,
         extension: u64,
     ) -> Result<Lease, WorkError> {
-        let state = self.items.get_mut(&lease.record_id).ok_or(WorkError::NotLeased)?;
+        let state = self
+            .items
+            .get_mut(&lease.record_id)
+            .ok_or(WorkError::NotLeased)?;
         validate_lease(state, lease, now)?;
         let new_expiry = lease.expires_at.saturating_add(extension);
         state.status = WorkStatus::Leased {
@@ -330,9 +327,7 @@ mod tests {
     fn policy() -> RetryPolicy {
         RetryPolicy {
             max_attempts: 3,
-            delay: RetryDelay::Fixed {
-                delay_ms: 1000,
-            },
+            delay: RetryDelay::Fixed { delay_ms: 1000 },
         }
     }
 
@@ -426,9 +421,9 @@ mod tests {
 
     #[test]
     fn registered_record_can_be_acquired() {
-        let record_id =RecordId::new();
-        let consumer =ConsumerId::new();
-        let mut work =WorkState::new(policy());
+        let record_id = RecordId::new();
+        let consumer = ConsumerId::new();
+        let mut work = WorkState::new(policy());
 
         work.register(record_id);
         let leases = work.acquire(consumer, 1000, 5000, 1);
