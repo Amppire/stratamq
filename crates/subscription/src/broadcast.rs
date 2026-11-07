@@ -1,25 +1,22 @@
-use std::collections::HashMap;
-use strata_types::ConsumerId;
+use crate::StreamState;
 
 #[derive(Debug, Clone, Default)]
 pub struct BroadcastState {
-    consumer_positions: HashMap<ConsumerId, u64>,
+    stream: StreamState,
 }
 
 impl BroadcastState {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            consumer_positions: HashMap::new(),
-        }
+        Self { stream: StreamState::new() }
+    }
+
+    pub fn stream_mut(&mut self) -> &mut StreamState {
+        &mut self.stream
     }
 
     #[must_use]
-    pub fn position(&self, consumer_id: &ConsumerId) -> Option<u64> {
-        self.consumer_positions.get(consumer_id).copied()
-    }
-
-    pub fn set_position(&mut self, consumer_id: ConsumerId, position: u64) {
-        self.consumer_positions.insert(consumer_id, position);
+    pub fn stream(&self) -> &StreamState {
+        &self.stream
     }
 }
