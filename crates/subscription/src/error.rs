@@ -1,8 +1,8 @@
+use thiserror::Error;
 use strata_types::{LeaseId, RecordId};
-
 use crate::work::Lease;
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum WorkError {
     #[error("Work item {record_id:?} is not ready for processing")]
     NotReady { record_id: RecordId },
