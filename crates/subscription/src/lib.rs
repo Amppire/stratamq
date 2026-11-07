@@ -188,6 +188,10 @@ pub enum WorkError {
 }
 
 impl WorkState {
+    #[must_use]
+    pub fn state(&self, record_id: RecordId) -> Option<&WorkItemState> {
+        self.items.get(&record_id)
+    }
     pub fn acquire(
         &mut self,
         journal: &strata_journal::Journal,
@@ -236,9 +240,6 @@ impl WorkState {
         }
         leases
     }
-}
-
-impl WorkState {
     pub fn ack(&mut self, lease: Lease, now: u64) -> Result<(), WorkError> {
         let state = self
             .items
@@ -286,9 +287,6 @@ impl WorkState {
             }),
         }
     }
-}
-
-impl WorkState {
     pub fn nack(&mut self, lease: Lease, now: u64, retry_delay: u64) -> Result<(), WorkError> {
         let state = self
             .items
@@ -339,9 +337,6 @@ impl WorkState {
             }),
         }
     }
-}
-
-impl WorkState {
     pub fn expire_leases(&mut self, now: u64) {
         for state in self.items.values_mut() {
             if let WorkStatus::Leased { expires_at, .. } = state.status
@@ -351,6 +346,58 @@ impl WorkState {
             }
         }
     }
+    pub fn extend_lease(&mut self, lease: Lease, now: u64, extension: u64) -> Result<Lease, WorkError> {
+        let state = self
+            .items
+            .get_mut(&lease.record_id)
+            .ok_or(WorkError::NotLeased {
+                record_id: lease.record_id,
+            })?;
+        match &mut state.status {
+            WorkStatus::Leased {
+                lease_id,
+                consumer_id,
+                generation,
+                expires_at,
+            } => {
+                if lease_id != lease.lease_id {
+                    return Err(WorkError::LeaseMismatch {
+                        record_id: lease.record_id,
+                        lease_id: lease.lease_id,
+                    });
+                }
+                if generation != lease.generation {
+                    return Err(WorkError::StaleGeneration {
+                        record_id: lease.record_id,
+                        current_generation: *generation,
+                        provided_generation: lease.generation,
+                    });
+                }
+                if expires_at < now {
+                    return Err(WorkError::LeaseExpired {
+                        record_id: lease.record_id,
+                        current_time: now,
+                        lease_expiration: *expires_at,
+                    });
+                }
+                let new_expiry = now.saturating_add(extension);
+                state.status = WorkStatus::Leased {
+                    lease_id,
+                    consumer_id,
+                    generation,
+                    expires_at: new_expiry,
+                }
+                Ok(Lease {
+                    expires_at: new_expiry,
+                    ..lease
+                })
+            }
+            _ => Err(WorkError::NotLeased {
+                record_id: lease.record_id,
+            }),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum RetryDelay {
@@ -465,5 +512,20 @@ mod tests {
         assert!(new_lease.generation > old_lease.generation);
         let result = work.ack(old_lease, 9000);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn active_lease_can_be_extended() {
+        let mut journal = strata_journal::Journal::new();
+        journal
+            .append(
+                strata_record::ProposedRecord::new("payload"),
+                strata_journal::ExpectedRevision::Any,
+            )
+            .unwrap();
+        let mut work = WorkState::new();
+        let lease = work.acquire(&journal, ConsumerId::new(), 1000, 5000, 1)[0];
+        let extended = work.extend(lease, 2000, 5000).unwrap();
+        assert!(extended.expires_at > lease.expires_at);
     }
 }
