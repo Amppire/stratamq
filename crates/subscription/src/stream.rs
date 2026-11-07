@@ -27,7 +27,7 @@ impl StreamState {
     }
 
     pub fn fetch<'a>(&mut self, journal: &'a Journal, max_records: usize) -> &'a [Record] {
-        let records = journal.records_from(self.next_position, max_records);
+        let records = journal.records_by_range(self.next_position, max_records);
         self.next_position += records.len() as u64;
         records
     }
