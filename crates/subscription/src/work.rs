@@ -100,11 +100,11 @@ pub struct WorkState {
 
 impl WorkState {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(retry_policy: RetryPolicy) -> Self {
         Self {
             items: HashMap::new(),
             ready: FifoReadyQueue::new(),
-            retry_policy: RetryPolicy::default(),
+            retry_policy,
         }
     }
 
@@ -133,7 +133,6 @@ impl WorkState {
 
     pub fn acquire(
         &mut self,
-        journal: &strata_journal::Journal,
         consumer_id: ConsumerId,
         now: u64,
         lease_duration: u64,
@@ -217,8 +216,10 @@ impl WorkState {
         let state = self
             .items
             .get_mut(&lease.record_id)
-            .ok_or(WorkError::NotLeased)?;
-        validate_lease(state, lease, now)?;
+            .ok_or(WorkError::NotLeased {
+                record_id: lease.record_id,
+            })?;
+        Self::validate_lease(state, lease, now)?;
         let new_expiry = lease.expires_at.saturating_add(extension);
         state.status = WorkStatus::Leased {
             lease_id: lease.lease_id,
@@ -314,12 +315,6 @@ impl WorkState {
     }
 }
 
-impl Default for WorkState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,7 +322,7 @@ mod tests {
     fn policy() -> RetryPolicy {
         RetryPolicy {
             max_attempts: 3,
-            delay: RetryDelay::Fixed { delay_ms: 1000 },
+            delay: RetryDelay::Fixed { delay: 1000 },
         }
     }
 
@@ -342,8 +337,9 @@ mod tests {
             .unwrap();
         let record_id = journal.get(0).unwrap().id();
         let consumer = ConsumerId::new();
-        let mut work = WorkState::new();
-        let leases = work.acquire(&journal, consumer, 1000, 5000, 1);
+        let mut work = WorkState::new(policy());
+        work.register(record_id);
+        let leases = work.acquire(consumer, 1000, 5000, 1);
         assert_eq!(leases.len(), 1);
         work.ack(leases[0], 2000).unwrap();
         assert!(matches!(
@@ -361,10 +357,12 @@ mod tests {
                 strata_journal::ExpectedRevision::Any,
             )
             .unwrap();
-        let mut work = WorkState::new();
-        let first = work.acquire(&journal, ConsumerId::new(), 1000, 5000, 1);
+        let record_id = journal.get(0).unwrap().id();
+        let mut work = WorkState::new(policy());
+        work.register(record_id);
+        let first = work.acquire(ConsumerId::new(), 1000, 5000, 1);
         assert_eq!(first.len(), 1);
-        let second = work.acquire(&journal, ConsumerId::new(), 2000, 5000, 1);
+        let second = work.acquire(ConsumerId::new(), 2000, 5000, 1);
         assert!(second.is_empty());
     }
 
@@ -377,11 +375,13 @@ mod tests {
                 strata_journal::ExpectedRevision::Any,
             )
             .unwrap();
-        let mut work = WorkState::new();
-        let first = work.acquire(&journal, ConsumerId::new(), 1000, 5000, 1);
+        let record_id = journal.get(0).unwrap().id();
+        let mut work = WorkState::new(policy());
+        work.register(record_id);
+        let first = work.acquire(ConsumerId::new(), 1000, 5000, 1);
         assert_eq!(first.len(), 1);
         work.expire_leases(7000);
-        let second = work.acquire(&journal, ConsumerId::new(), 8000, 5000, 1);
+        let second = work.acquire(ConsumerId::new(), 8000, 5000, 1);
         assert_eq!(second.len(), 1);
         assert!(second[0].generation > first[0].generation);
     }
@@ -395,10 +395,12 @@ mod tests {
                 strata_journal::ExpectedRevision::Any,
             )
             .unwrap();
-        let mut work = WorkState::new();
-        let old_lease = work.acquire(&journal, ConsumerId::new(), 1000, 5000, 1)[0];
+        let record_id = journal.get(0).unwrap().id();
+        let mut work = WorkState::new(policy());
+        work.register(record_id);
+        let old_lease = work.acquire(ConsumerId::new(), 1000, 5000, 1)[0];
         work.expire_leases(7000);
-        let new_lease = work.acquire(&journal, ConsumerId::new(), 8000, 5000, 1)[0];
+        let new_lease = work.acquire(ConsumerId::new(), 8000, 5000, 1)[0];
         assert!(new_lease.generation > old_lease.generation);
         let result = work.ack(old_lease, 9000);
         assert!(result.is_err());
@@ -413,9 +415,11 @@ mod tests {
                 strata_journal::ExpectedRevision::Any,
             )
             .unwrap();
-        let mut work = WorkState::new();
-        let lease = work.acquire(&journal, ConsumerId::new(), 1000, 5000, 1)[0];
-        let extended = work.extend(lease, 2000, 5000).unwrap();
+        let record_id = journal.get(0).unwrap().id();
+        let mut work = WorkState::new(policy());
+        work.register(record_id);
+        let lease = work.acquire(ConsumerId::new(), 1000, 5000, 1)[0];
+        let extended = work.extend_lease(lease, 2000, 5000).unwrap();
         assert!(extended.expires_at > lease.expires_at);
     }
 
