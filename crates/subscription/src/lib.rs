@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use strata_types::{ConsumerId, JournalId, LeaseId, RecordId, SubscriptionId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -444,6 +444,24 @@ impl RetryPolicy {
                 let factor = u64::from(multiplier).saturating_pow(exponent);
                 initial.saturating_mul(factor).min(max)
             }
+        }
+    }
+}
+
+pub trait ReadyQueue {
+    fn push(&mut self, record_id: RecordId);
+    fn pop(&mut self) -> Option<RecordId>;
+    fn is_empty(&self) -> bool;
+}
+
+pub struct FifoReadyQueue {
+    items: VecDeque<RecordId>,
+}
+
+impl FifoReadyQueue {
+    pub fn new() -> Self {
+        Self {
+            items: VecDeque::new(),
         }
     }
 }
