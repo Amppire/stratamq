@@ -368,6 +368,46 @@ impl WorkState {
             }),
         }
     }
+    pub fn validate_lease(state: &WorkItemState, lease: Lease, now: u64) -> Result<(), WorkError> {
+        match state.status {
+            WorkStatus::Leased {
+                lease_id,
+                generation,
+                expires_at,
+                ..
+            } => {
+                if lease_id != lease.lease_id {
+                    return Err(WorkError::LeaseMismatch {
+                        record_id: lease.record_id,
+                        lease_id: lease.lease_id,
+                    });
+                }
+                if generation != lease.generation {
+                    return Err(WorkError::StaleGeneration {
+                        record_id: lease.record_id,
+                        current_generation: generation,
+                        provided_generation: lease.generation,
+                    });
+                }
+                if expires_at < now {
+                    return Err(WorkError::LeaseExpired {
+                        record_id: lease.record_id,
+                        current_time: now,
+                        lease_expiration: expires_at,
+                    });
+                }
+                Ok(())
+            },
+            WorkStatus::Complete => {
+                Err(WorkError::AlreadyCompleted {
+                    record_id: lease.record_id,
+                })
+            }
+            _ => Err(WorkError::NotLeased {
+                record_id: lease.record_id,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
