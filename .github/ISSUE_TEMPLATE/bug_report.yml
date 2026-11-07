@@ -1,0 +1,76 @@
+name: Bug Report
+description: Report an unexpected error, race condition, invariant violation, or test failure.
+title: "Bug: "
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue in StrataMQ. For security vulnerabilities, please refer to [SECURITY.md](../SECURITY.md) instead.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Summary
+      description: Clear and concise description of the bug.
+      placeholder: Describe what happened...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component / Crate
+      description: Which crate or subsystem is experiencing the defect?
+      options:
+        - "crates/types (strata-types)"
+        - "crates/record (strata-record)"
+        - "crates/journal (strata-journal)"
+        - "crates/subscription (strata-subscription)"
+        - "crates/protocol-core (NMP wire protocol)"
+        - "crates/storage-core (Storage / WAL)"
+        - "crates/sharding (Virtual sharding / placement)"
+        - "crates/server (Broker daemon)"
+        - "crates/cli (CLI tools)"
+        - "crates/bench (Benchmark harnesses)"
+        - "CI / Tooling / Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal reproducible example or steps to trigger the bug.
+      placeholder: |
+        1. In crate `...`
+        2. Execute `...`
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs Actual Behavior
+      description: What did you expect to happen, and what happened instead?
+      placeholder: |
+        - Expected:
+        - Actual:
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostic Logs / Compiler Output
+      description: Paste any panic traces, test failure outputs, or clippy warnings here.
+      render: shell
+      placeholder: Paste terminal output here...
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Rust version, OS, architecture.
+      placeholder: e.g. rustc 1.85.0-nightly / macOS arm64 / Linux x86_64

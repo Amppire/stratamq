@@ -79,7 +79,7 @@ Comprehensive engineering specifications and design records are located in [`doc
 - **[System Architecture Overview](docs/architecture/overview.md)**: Detailed technical dive into the dual-plane model, OCC sequence, and consumption engines.
 - **[Development Guide](docs/DEVELOPMENT.md)**: Coding conventions, property testing guidelines, fuzzing, and verification standards.
 - **[Delivery Roadmap & Status](docs/roadmap.md)**: Live progress tracking and checklist for P0 exit and P1 transition.
-- **[Dual-Workstream Coordination Plan](docs/COORDINATION.md)**: Parallel work breakdown, shared integration contracts, ownership matrix, and task tracking for two developers.
+- **[Dual-Workstream Execution Plan](docs/roadmap.md#2-phase-p0-milestone-architecture-validation--dual-workstream-plan)**: Parallel work breakdown, shared integration contracts, ownership matrix, and task tracking.
 
 ---
 

@@ -1,0 +1,23 @@
+# Global repository owners
+* @harisrovca @ShaunakV2
+
+# Workstream A: State & Networking Plane (Developer 1: @harisrovca)
+/crates/subscription/   @harisrovca @ShaunakV2
+/crates/protocol-core/  @harisrovca @ShaunakV2
+/crates/server/         @harisrovca @ShaunakV2
+
+# Workstream B: Record & Storage Plane (Developer 2: @ShaunakV2)
+/crates/record/         @ShaunakV2 @harisrovca
+/crates/journal/        @ShaunakV2 @harisrovca
+/crates/storage-core/   @ShaunakV2 @harisrovca
+/crates/sharding/       @ShaunakV2 @harisrovca
+/crates/bench/          @ShaunakV2 @harisrovca
+
+# Shared Domain Primitives & Types
+/crates/types/          @harisrovca @ShaunakV2
+
+# Architecture, ADRs, & Specifications
+/docs/                  @harisrovca @ShaunakV2
+
+# CI/CD Workflows & GitHub Configuration
+/.github/               @harisrovca @ShaunakV2

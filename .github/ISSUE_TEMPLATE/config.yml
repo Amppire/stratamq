@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/Amppire/stratamq/security/advisories/new
+    about: Please report security vulnerabilities privately via GitHub Security Advisories or email.
+  - name: Architecture Decision Register (ADR)
+    url: https://github.com/Amppire/stratamq/blob/dev/docs/adr/README.md
+    about: Read our accepted and experimental architecture decisions before proposing new architectural directions.

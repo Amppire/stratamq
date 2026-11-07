@@ -39,7 +39,13 @@ Execute the complete workspace test suite:
 cargo test --workspace
 ```
 
-### 2.3. Code Formatting
+### 2.3. Documentation Build
+Verify that all rustdoc links and documentation build without warnings:
+```bash
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+```
+
+### 2.4. Code Formatting
 Check formatting compliance:
 ```bash
 cargo fmt --all -- --check
@@ -49,6 +55,16 @@ Format code automatically:
 ```bash
 cargo fmt --all
 ```
+
+### 2.5. Continuous Integration (GitHub Actions)
+All checks are automated on GitHub Actions via [`.github/workflows/ci.yml`](file:///Users/harisrovca/Documents/Workspaces/stratamq/.github/workflows/ci.yml):
+- **Format**: Validates `cargo fmt`.
+- **Clippy**: Validates `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Test**: Matrix test suite across `ubuntu-latest` and `macos-latest`.
+- **Doc**: Validates `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`.
+- **Security Audit**: Scans dependencies with `cargo audit`.
+
+Release builds and cross-platform packaging are automated via [`.github/workflows/cd.yml`](file:///Users/harisrovca/Documents/Workspaces/stratamq/.github/workflows/cd.yml) on Git version tags (`v*`).
 
 ---
 

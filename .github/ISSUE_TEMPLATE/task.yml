@@ -1,0 +1,82 @@
+name: Implementation Task
+description: Track an engineering task, tournament experiment, or feature implementation.
+title: "Task: "
+labels: ["type:task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for implementation tasks across the **State & Networking Plane** and **Record & Storage Plane**.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary & Motivation
+      description: What needs to be built or refactored, and why is it necessary?
+      placeholder: |
+        Describe the motivation, context, and problem statement...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: plane
+    attributes:
+      label: Architectural Plane
+      description: Which primary architectural plane does this task fall under?
+      options:
+        - "State & Networking Plane (protocol-core, subscription, server)"
+        - "Record & Storage Plane (record, journal, storage-core, sharding)"
+        - "Common Primitives / Benchmarking (types, bench, cli)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: cross_workstream
+    attributes:
+      label: Cross-Workstream Comprehension
+      description: Why does the other workstream / collaborator care about this task? What shared boundary or invariant does it touch?
+      placeholder: |
+        - Shared Concept / Boundary:
+        - Why the other workstream needs this:
+        - Failure Mode / Impact on neighbor components:
+    validations:
+      required: true
+
+  - type: textarea
+    id: technical_requirements
+    attributes:
+      label: Technical Requirements & Implementation Details
+      description: Specific files to modify, data structures, trait signatures, or protocol opcodes.
+      placeholder: |
+        #### 1. Files to Modify / Create
+        - `crates/...`
+
+        #### 2. Key Types & Design
+        ```rust
+        // Rust structs, enums, or traits
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria & Verification
+      description: Checklist of concrete deliverables and tests required for completion.
+      value: |
+        - [ ] All code strictly adheres to `#![forbid(unsafe_code)]`.
+        - [ ] Passes `cargo fmt --all -- --check`.
+        - [ ] Passes `cargo clippy --workspace --all-targets -- -D warnings`.
+        - [ ] Passes `cargo test --workspace`.
+        - [ ] Unit tests cover new error conditions and happy paths.
+    validations:
+      required: true
+
+  - type: textarea
+    id: related_specs
+    attributes:
+      label: Related Specifications & ADRs
+      description: Links to relevant sections in `docs/architecture/` or `docs/adr/`.
+      placeholder: |
+        - [ADR-00X: Title](docs/adr/adr-00X-title.md)
+        - [Charter / Spec](docs/architecture/overview.md)
