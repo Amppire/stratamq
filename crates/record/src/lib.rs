@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+pub mod batch;
+pub mod compression;
+pub mod header;
+
 use bytes::Bytes;
 use std::collections::BTreeMap;
 use strata_types::RecordId;
