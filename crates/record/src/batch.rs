@@ -91,6 +91,12 @@ pub enum BatchError {
     MalformedRecord(String),
 }
 
+impl From<crate::cursor::CursorError> for BatchError {
+    fn from(err: crate::cursor::CursorError) -> Self {
+        BatchError::MalformedRecord(err.to_string())
+    }
+}
+
 /// Per-record entry presence flags.
 const ENTRY_FLAG_HAS_SUBJECT: u8 = 0b001;
 const ENTRY_FLAG_HAS_REVISION: u8 = 0b010;
@@ -108,9 +114,89 @@ const ENTRY_FLAG_HAS_KEY: u8 = 0b100;
 ///
 /// # Errors
 /// Returns [`BatchError`] if the record's timestamp precedes `first_timestamp`.
-pub(crate) fn encode_entry(_record: &Record, _first_timestamp: u64) -> Result<Vec<u8>, BatchError> {
-    unimplemented!("encode_entry")
+pub(crate) fn encode_entry(record: &Record, first_timestamp: u64) -> Result<Vec<u8>, BatchError> {
+    let delta = record
+        .timestamp()
+        .checked_sub(first_timestamp)
+        .ok_or_else(|| {
+            BatchError::MalformedRecord(format!(
+                "record timestamp {} precedes batch first_timestamp {first_timestamp}",
+                record.timestamp()
+            ))
+        })?;
+    let delta = u32::try_from(delta).map_err(|_| {
+        BatchError::MalformedRecord(format!("timestamp_delta {delta} exceeds u32"))
+    })?;
+
+    let mut flags = 0u8;
+    if record.subject().is_some() {
+        flags |= ENTRY_FLAG_HAS_SUBJECT;
+    }
+    if record.revision().is_some() {
+        flags |= ENTRY_FLAG_HAS_REVISION;
+    }
+    if record.key().is_some() {
+        flags |= ENTRY_FLAG_HAS_KEY;
+    }
+
+    // Build the entry body, then prefix it with its u32 length.
+    let mut body = Vec::new();
+    body.extend_from_slice(&delta.to_be_bytes());
+    body.push(flags);
+
+    if let Some(subject) = record.subject() {
+        let s = subject.as_str().as_bytes();
+        let len = u16::try_from(s.len())
+            .map_err(|_| BatchError::MalformedRecord("subject exceeds u16 length".into()))?;
+        body.extend_from_slice(&len.to_be_bytes());
+        body.extend_from_slice(s);
+    }
+
+    if let Some(revision) = record.revision() {
+        body.extend_from_slice(&revision.to_be_bytes());
+    }
+
+    if let Some(key) = record.key() {
+        let len = u32::try_from(key.len())
+            .map_err(|_| BatchError::MalformedRecord("key exceeds u32 length".into()))?;
+        body.extend_from_slice(&len.to_be_bytes());
+        body.extend_from_slice(key);
+    }
+
+    let headers = record.headers();
+    let header_count = u16::try_from(headers.len())
+        .map_err(|_| BatchError::MalformedRecord("too many headers (exceeds u16)".into()))?;
+    body.extend_from_slice(&header_count.to_be_bytes());
+    for (name, value) in headers {
+        let name_bytes = name.as_bytes();
+        let name_len = u16::try_from(name_bytes.len())
+            .map_err(|_| BatchError::MalformedRecord("header name exceeds u16 length".into()))?;
+        body.extend_from_slice(&name_len.to_be_bytes());
+        body.extend_from_slice(name_bytes);
+        let val_len = u32::try_from(value.len())
+            .map_err(|_| BatchError::MalformedRecord("header value exceeds u32 length".into()))?;
+        body.extend_from_slice(&val_len.to_be_bytes());
+        body.extend_from_slice(value);
+    }
+
+    let payload = record.payload();
+    let payload_len = u32::try_from(payload.len())
+        .map_err(|_| BatchError::MalformedRecord("payload exceeds u32 length".into()))?;
+    body.extend_from_slice(&payload_len.to_be_bytes());
+    body.extend_from_slice(payload);
+
+    let body_len = u32::try_from(body.len())
+        .map_err(|_| BatchError::MalformedRecord("entry body exceeds u32 length".into()))?;
+    let mut out = Vec::with_capacity(4 + body.len());
+    out.extend_from_slice(&body_len.to_be_bytes());
+    out.extend_from_slice(&body);
+    Ok(out)
 }
+
+/// A bounded forward cursor over an entry's bytes. Every read is length-checked
+/// so a truncated or inconsistent entry yields [`BatchError::MalformedRecord`]
+/// rather than panicking.
+use crate::cursor::Cursor;
 
 /// Decode a single record entry from the front of `bytes`, returning the
 /// decoded content and the number of bytes consumed.
@@ -119,10 +205,85 @@ pub(crate) fn encode_entry(_record: &Record, _first_timestamp: u64) -> Result<Ve
 /// Returns [`BatchError::MalformedRecord`] on truncation or inconsistent
 /// length fields.
 pub(crate) fn decode_entry(
-    _bytes: &[u8],
-    _first_timestamp: u64,
+    bytes: &[u8],
+    first_timestamp: u64,
 ) -> Result<(DecodedEntry, usize), BatchError> {
-    unimplemented!("decode_entry")
+    // Read the u32 length prefix, then bound the body to exactly that many bytes
+    // so an over-long length field cannot read past the entry.
+    let mut head = Cursor::new(bytes);
+    let body_len = head.u32()? as usize;
+    let body_end = 4usize
+        .checked_add(body_len)
+        .ok_or_else(|| BatchError::MalformedRecord("entry length arithmetic overflow".into()))?;
+    if body_end > bytes.len() {
+        return Err(BatchError::MalformedRecord(format!(
+            "entry truncated: declared body {body_len}, have {} after prefix",
+            bytes.len().saturating_sub(4)
+        )));
+    }
+    let mut c = Cursor::new(&bytes[4..body_end]);
+
+    let delta = c.u32()?;
+    let timestamp = first_timestamp
+        .checked_add(u64::from(delta))
+        .ok_or_else(|| BatchError::MalformedRecord("timestamp overflow".into()))?;
+    let flags = c.u8()?;
+
+    let subject = if flags & ENTRY_FLAG_HAS_SUBJECT != 0 {
+        let len = c.u16()? as usize;
+        let raw = c.take(len)?;
+        let s = std::str::from_utf8(raw)
+            .map_err(|_| BatchError::MalformedRecord("subject is not valid UTF-8".into()))?;
+        Some(crate::Subject::new(s))
+    } else {
+        None
+    };
+
+    let revision = if flags & ENTRY_FLAG_HAS_REVISION != 0 {
+        Some(c.u64()?)
+    } else {
+        None
+    };
+
+    let key = if flags & ENTRY_FLAG_HAS_KEY != 0 {
+        let len = c.u32()? as usize;
+        Some(bytes::Bytes::copy_from_slice(c.take(len)?))
+    } else {
+        None
+    };
+
+    let header_count = c.u16()? as usize;
+    let mut headers = std::collections::BTreeMap::new();
+    for _ in 0..header_count {
+        let name_len = c.u16()? as usize;
+        let name_raw = c.take(name_len)?;
+        let name = std::str::from_utf8(name_raw)
+            .map_err(|_| BatchError::MalformedRecord("header name is not valid UTF-8".into()))?
+            .to_owned();
+        let val_len = c.u32()? as usize;
+        let value = bytes::Bytes::copy_from_slice(c.take(val_len)?);
+        headers.insert(name, value);
+    }
+
+    let payload_len = c.u32()? as usize;
+    let payload = bytes::Bytes::copy_from_slice(c.take(payload_len)?);
+
+    if !c.is_exhausted() {
+        return Err(BatchError::MalformedRecord(format!(
+            "entry has {} trailing bytes after payload",
+            c.remaining()
+        )));
+    }
+
+    let entry = DecodedEntry {
+        timestamp,
+        revision,
+        subject,
+        key,
+        headers,
+        payload,
+    };
+    Ok((entry, body_end))
 }
 
 #[cfg(test)]
