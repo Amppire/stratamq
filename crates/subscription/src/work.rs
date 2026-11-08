@@ -92,6 +92,7 @@ impl RetryPolicy {
     }
 }
 
+#[derive(Debug)]
 pub struct WorkState {
     items: HashMap<RecordId, WorkItemState>,
     ready: FifoReadyQueue,
@@ -294,7 +295,7 @@ impl WorkState {
         }
     }
 
-    pub fn expire_leases(&mut self, now: u64) {
+    pub fn expire_leases(&mut self, now: u64) -> Vec<RecordId> {
         let mut ready_ids = Vec::new();
         for (record_id, state) in &mut self.items {
             let expired = matches!(
@@ -309,9 +310,10 @@ impl WorkState {
                 ready_ids.push(*record_id);
             }
         }
-        for record_id in ready_ids {
-            self.ready.push(record_id);
+        for record_id in &ready_ids {
+            self.ready.push(*record_id);
         }
+        ready_ids
     }
 }
 
