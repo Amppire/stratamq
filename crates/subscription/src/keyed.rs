@@ -39,7 +39,7 @@ impl KeyedWorkState {
 
     pub fn register(&mut self, record_id: RecordId, key: WorkKey) {
         self.record_keys.insert(record_id, key.clone());
-        
+
         if self.blocked_keys.contains(&key) || self.active_by_key.contains_key(&key) {
             self.pending_by_key
                 .entry(key)
@@ -59,16 +59,17 @@ impl KeyedWorkState {
         }
 
         if let Some(pending) = self.pending_by_key.get_mut(key) {
-            if let Some(record_id) = pending.pop_front() {
-                if pending.is_empty() {
-                    self.pending_by_key.remove(key);
-                }
-                self.active_by_key.insert(key.clone(), record_id);
-                self.work.register(record_id);
-                return Some(record_id);
+            let Some(record_id) = pending.pop_front() else {
+                self.pending_by_key.remove(key);
+                return None;
+            };
+            if pending.is_empty() {
+                self.pending_by_key.remove(key);
             }
+            self.active_by_key.insert(key.clone(), record_id);
+            self.work.register(record_id);
+            return Some(record_id);
         }
-        self.pending_by_key.remove(key);
         None
     }
 
@@ -119,8 +120,15 @@ impl KeyedWorkState {
     pub fn is_key_blocked(&self, key: &WorkKey) -> bool {
         self.blocked_keys.contains(key)
     }
-    pub fn acquire(&mut self, consumer_id: ConsumerId, now: u64, lease_duration: u64, max_records: usize) -> Vec<Lease> {
-        self.work.acquire(consumer_id, now, lease_duration, max_records)
+    pub fn acquire(
+        &mut self,
+        consumer_id: ConsumerId,
+        now: u64,
+        lease_duration: u64,
+        max_records: usize,
+    ) -> Vec<Lease> {
+        self.work
+            .acquire(consumer_id, now, lease_duration, max_records)
     }
 }
 
@@ -128,7 +136,7 @@ impl KeyedWorkState {
 pub enum KeyFailurePolicy {
     #[default]
     StrictBlock, // If record fails/DLQs, subsequent records for key are blocked
-    Relaxed,     // Subsequent records for key proceed even if predecessor failed
+    Relaxed, // Subsequent records for key proceed even if predecessor failed
 }
 
 #[cfg(test)]
