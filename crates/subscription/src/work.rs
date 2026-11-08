@@ -300,11 +300,11 @@ impl WorkState {
                 let Some(state) = self.items.get_mut(&record_id) else {
                     continue;
                 };
-                if let WorkStatus::RetryWait { available_at, .. } = state.status {
-                    if available_at <= now {
-                        state.status = WorkStatus::Ready;
-                        self.ready.push(record_id);
-                    }
+                if let WorkStatus::RetryWait { available_at, .. } = state.status
+                    && available_at <= now
+                {
+                    state.status = WorkStatus::Ready;
+                    self.ready.push(record_id);
                 }
             }
         }
@@ -320,12 +320,12 @@ impl WorkState {
                 let Some(state) = self.items.get_mut(&record_id) else {
                     continue;
                 };
-                if let WorkStatus::Leased { expires_at, .. } = state.status {
-                    if expires_at <= now {
-                        state.status = WorkStatus::Ready;
-                        self.ready.push(record_id);
-                        expired_ids.push(record_id);
-                    }
+                if let WorkStatus::Leased { expires_at, .. } = state.status
+                    && expires_at <= now
+                {
+                    state.status = WorkStatus::Ready;
+                    self.ready.push(record_id);
+                    expired_ids.push(record_id);
                 }
             }
         }
