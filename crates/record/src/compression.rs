@@ -88,8 +88,7 @@ pub enum CompressionError {
 mod tests {
     use super::*;
 
-    const SAMPLE: &[u8] =
-        b"the quick brown fox jumps over the lazy dog, the quick brown fox again";
+    const SAMPLE: &[u8] = b"the quick brown fox jumps over the lazy dog, the quick brown fox again";
 
     #[test]
     fn as_u8_matches_discriminant() {
@@ -100,9 +99,15 @@ mod tests {
 
     #[test]
     fn from_u8_accepts_known_codecs() {
-        assert_eq!(CompressionCodec::from_u8(0).unwrap(), CompressionCodec::None);
+        assert_eq!(
+            CompressionCodec::from_u8(0).unwrap(),
+            CompressionCodec::None
+        );
         assert_eq!(CompressionCodec::from_u8(1).unwrap(), CompressionCodec::Lz4);
-        assert_eq!(CompressionCodec::from_u8(2).unwrap(), CompressionCodec::Zstd);
+        assert_eq!(
+            CompressionCodec::from_u8(2).unwrap(),
+            CompressionCodec::Zstd
+        );
     }
 
     #[test]
