@@ -169,6 +169,10 @@ impl WorkState {
                 generation: state.generation,
                 expires_at,
             };
+            self.expiry_wheel
+                .entry(expires_at)
+                .or_default()
+                .push(record_id);
             leases.push(Lease {
                 record_id,
                 lease_id,
@@ -209,6 +213,10 @@ impl WorkState {
             available_at: now.saturating_add(retry_delay),
             generation: state.generation,
         };
+        self.retry_wheel
+            .entry(now.saturating_add(retry_delay))
+            .or_default()
+            .push(lease.record_id);
         Ok(())
     }
 
@@ -232,6 +240,10 @@ impl WorkState {
             generation: lease.generation,
             expires_at: new_expiry,
         };
+        self.expiry_wheel
+            .entry(new_expiry)
+            .or_default()
+            .push(lease.record_id);
         Ok(Lease {
             expires_at: new_expiry,
             ..lease
@@ -280,44 +292,44 @@ impl WorkState {
     }
 
     pub fn promote_retries(&mut self, now: u64) {
-        let mut ready_ids = Vec::new();
-        for (record_id, state) in &mut self.items {
-            let eligible = matches!(
-                state.status,
-                WorkStatus::RetryWait {
-                    available_at,
-                    ..
-                } if available_at <= now
-            );
-            if eligible {
-                state.status = WorkStatus::Ready;
-                ready_ids.push(*record_id);
+        let remaining = self.retry_wheel.split_off(&now.saturating_add(1));
+        let elapsed = std::mem::replace(&mut self.retry_wheel, remaining);
+
+        for (_timestamp, record_ids) in elapsed {
+            for record_id in record_ids {
+                let Some(state) = self.items.get_mut(&record_id) else {
+                    continue;
+                };
+                if let WorkStatus::RetryWait { available_at, .. } = state.status {
+                    if available_at <= now {
+                        state.status = WorkStatus::Ready;
+                        self.ready.push(record_id);
+                    }
+                }
             }
-        }
-        for record_id in ready_ids {
-            self.ready.push(record_id);
         }
     }
 
     pub fn expire_leases(&mut self, now: u64) -> Vec<RecordId> {
-        let mut ready_ids = Vec::new();
-        for (record_id, state) in &mut self.items {
-            let expired = matches!(
-                state.status,
-                WorkStatus::Leased {
-                    expires_at,
-                    ..
-                } if expires_at < now
-            );
-            if expired {
-                state.status = WorkStatus::Ready;
-                ready_ids.push(*record_id);
+        let remaining = self.expiry_wheel.split_off(&now.saturating_add(1));
+        let elapsed = std::mem::replace(&mut self.expiry_wheel, remaining);
+        let mut expired_ids = Vec::new();
+
+        for (_timestamp, record_ids) in elapsed {
+            for record_id in record_ids {
+                let Some(state) = self.items.get_mut(&record_id) else {
+                    continue;
+                };
+                if let WorkStatus::Leased { expires_at, .. } = state.status {
+                    if expires_at <= now {
+                        state.status = WorkStatus::Ready;
+                        self.ready.push(record_id);
+                        expired_ids.push(record_id);
+                    }
+                }
             }
         }
-        for record_id in &ready_ids {
-            self.ready.push(*record_id);
-        }
-        ready_ids
+        expired_ids
     }
 }
 
