@@ -29,7 +29,7 @@ pub struct AppendResult {
     pub revision: Option<u64>,
     pub position: u64,
 }
-
+#[derive(Debug)]
 pub struct Journal {
     id: JournalId,
     records: Vec<Record>,
