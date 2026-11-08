@@ -55,7 +55,19 @@ impl BatchHeader {
     /// Encode this header to exactly [`HEADER_LEN`] big-endian bytes.
     #[must_use]
     pub fn encode(&self) -> [u8; HEADER_LEN] {
-        unimplemented!("BatchHeader::encode")
+        let mut out = [0u8; HEADER_LEN];
+        out[0..4].copy_from_slice(&self.total_len.to_be_bytes());
+        out[4] = self.format_version;
+        out[5] = self.flags;
+        out[6] = self.compression;
+        out[7] = self.reserved;
+        out[8..12].copy_from_slice(&self.record_count.to_be_bytes());
+        out[12..20].copy_from_slice(&self.producer_id.to_be_bytes());
+        out[20..24].copy_from_slice(&self.producer_epoch.to_be_bytes());
+        out[24..32].copy_from_slice(&self.first_sequence.to_be_bytes());
+        out[32..40].copy_from_slice(&self.first_timestamp.to_be_bytes());
+        out[40..44].copy_from_slice(&self.crc32c.to_be_bytes());
+        out
     }
 
     /// Decode a header from the front of `bytes`, validating defensive bounds.
@@ -63,8 +75,39 @@ impl BatchHeader {
     /// # Errors
     /// Returns [`HeaderError`] if the slice is too short, the version is
     /// unsupported, or `record_count` / `total_len` exceed their caps.
-    pub fn decode(_bytes: &[u8]) -> Result<Self, HeaderError> {
-        unimplemented!("BatchHeader::decode")
+    pub fn decode(bytes: &[u8]) -> Result<Self, HeaderError> {
+        if bytes.len() < HEADER_LEN {
+            return Err(HeaderError::Truncated(bytes.len()));
+        }
+
+        let format_version = bytes[4];
+        if format_version != FORMAT_VERSION_V0 {
+            return Err(HeaderError::UnsupportedVersion(format_version));
+        }
+
+        let total_len = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
+        if total_len > MAX_TOTAL_LEN {
+            return Err(HeaderError::TotalLenTooLarge(total_len));
+        }
+
+        let record_count = u32::from_be_bytes(bytes[8..12].try_into().unwrap());
+        if record_count > MAX_RECORD_COUNT {
+            return Err(HeaderError::RecordCountTooLarge(record_count));
+        }
+
+        Ok(Self {
+            total_len,
+            format_version,
+            flags: bytes[5],
+            compression: bytes[6],
+            reserved: bytes[7],
+            record_count,
+            producer_id: u64::from_be_bytes(bytes[12..20].try_into().unwrap()),
+            producer_epoch: u32::from_be_bytes(bytes[20..24].try_into().unwrap()),
+            first_sequence: u64::from_be_bytes(bytes[24..32].try_into().unwrap()),
+            first_timestamp: u64::from_be_bytes(bytes[32..40].try_into().unwrap()),
+            crc32c: u32::from_be_bytes(bytes[40..44].try_into().unwrap()),
+        })
     }
 }
 
