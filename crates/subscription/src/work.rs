@@ -1,5 +1,5 @@
 use crate::{FifoReadyQueue, ReadyQueue, WorkError};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use strata_types::{ConsumerId, LeaseId, RecordId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +43,15 @@ impl Default for WorkItemState {
             generation: 0,
         }
     }
+}
+
+#[derive(Debug)]
+pub struct WorkState {
+    items: HashMap<RecordId, WorkItemState>,
+    ready: FifoReadyQueue,
+    retry_policy: RetryPolicy,
+    expiry_wheel: BTreeMap<u64, Vec<RecordId>>,
+    retry_wheel: BTreeMap<u64, Vec<RecordId>>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,13 +101,6 @@ impl RetryPolicy {
     }
 }
 
-#[derive(Debug)]
-pub struct WorkState {
-    items: HashMap<RecordId, WorkItemState>,
-    ready: FifoReadyQueue,
-    retry_policy: RetryPolicy,
-}
-
 impl WorkState {
     #[must_use]
     pub fn new(retry_policy: RetryPolicy) -> Self {
@@ -106,6 +108,8 @@ impl WorkState {
             items: HashMap::new(),
             ready: FifoReadyQueue::new(),
             retry_policy,
+            expiry_wheel: BTreeMap::new(),
+            retry_wheel: BTreeMap::new(),
         }
     }
 
