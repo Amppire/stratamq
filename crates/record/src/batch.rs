@@ -1,4 +1,4 @@
-//! Record Batch v0 encoder and decoder.
+ //! Record Batch v0 encoder and decoder.
 //!
 //! A [`RecordBatchV0`] is the fixed 44-byte [`crate::header::BatchHeader`]
 //! followed by the (optionally compressed) concatenation of individually
@@ -32,6 +32,27 @@ pub struct DecodedEntry {
     pub payload: bytes::Bytes,
 }
 
+impl DecodedEntry {
+    /// Rebuild a [`Record`] from this decoded content, minting a fresh
+    /// `RecordId`. The id is broker-assigned at commit (NMP §8.1) and is not
+    /// carried on the wire, so a decoded batch's records carry new ids; equality
+    /// against the source batch is therefore content-only.
+    #[must_use]
+    pub fn into_record(self) -> Record {
+        let mut proposed = crate::ProposedRecord::new(self.payload);
+        if let Some(subject) = self.subject {
+            proposed = proposed.with_subject(subject);
+        }
+        if let Some(key) = self.key {
+            proposed = proposed.with_key(key);
+        }
+        for (name, value) in self.headers {
+            proposed = proposed.with_header(name, value);
+        }
+        proposed.commit(self.timestamp, self.revision)
+    }
+}
+
 /// An encoded/decoded Record Batch v0: producer metadata plus records.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordBatchV0 {
@@ -58,9 +79,75 @@ impl RecordBatchV0 {
     /// codec fails.
     pub fn encode(
         &self,
-        _codec: crate::compression::CompressionCodec,
+        codec: crate::compression::CompressionCodec,
     ) -> Result<Vec<u8>, BatchError> {
-        unimplemented!("RecordBatchV0::encode")
+        use crate::header::{
+            BatchHeader, FORMAT_VERSION_V0, HEADER_LEN, MAX_RECORD_COUNT, MAX_TOTAL_LEN,
+        };
+
+        let record_count = u32::try_from(self.records.len())
+            .map_err(|_| BatchError::MalformedRecord("record_count exceeds u32".into()))?;
+        if record_count > MAX_RECORD_COUNT {
+            return Err(BatchError::Header(
+                crate::header::HeaderError::RecordCountTooLarge(record_count),
+            ));
+        }
+
+        // 1. Flatten records into the uncompressed blob.
+        let mut raw = Vec::new();
+        let mut has_subject = false;
+        for record in &self.records {
+            if record.subject().is_some() {
+                has_subject = true;
+            }
+            raw.extend_from_slice(&encode_entry(record, self.first_timestamp)?);
+        }
+
+        // 2. Compress the blob as a unit.
+        let stored = codec.compress(&raw)?;
+
+        // 3. Castagnoli CRC32C over the STORED (compressed) bytes —
+        //    hardware-accelerated; integrity is checked before decompression
+        //    on the read path.
+        let crc32c = crc32c::crc32c(&stored);
+
+        // 4. Defensive total_len bound.
+        let total_len = u32::try_from(HEADER_LEN + stored.len())
+            .map_err(|_| BatchError::MalformedRecord("batch exceeds u32 total_len".into()))?;
+        if total_len > MAX_TOTAL_LEN {
+            return Err(BatchError::Header(
+                crate::header::HeaderError::TotalLenTooLarge(total_len),
+            ));
+        }
+
+        // 5. Build the header flags: bit0 has_subject, bit1 is_transactional.
+        let mut flags = 0u8;
+        if has_subject {
+            flags |= 0b01;
+        }
+        if self.is_transactional {
+            flags |= 0b10;
+        }
+
+        let header = BatchHeader {
+            total_len,
+            format_version: FORMAT_VERSION_V0,
+            flags,
+            compression: codec.as_u8(),
+            reserved: 0,
+            record_count,
+            producer_id: self.producer_id,
+            producer_epoch: self.producer_epoch,
+            first_sequence: self.first_sequence,
+            first_timestamp: self.first_timestamp,
+            crc32c,
+        };
+
+        // 6. Prepend header to stored records.
+        let mut out = Vec::with_capacity(HEADER_LEN + stored.len());
+        out.extend_from_slice(&header.encode());
+        out.extend_from_slice(&stored);
+        Ok(out)
     }
 
     /// Decode a batch from `bytes`, validating the header, defensive bounds,
@@ -69,8 +156,58 @@ impl RecordBatchV0 {
     /// # Errors
     /// Returns [`BatchError`] on truncation, bound violation, checksum
     /// mismatch, or malformed record framing.
-    pub fn decode(_bytes: &[u8]) -> Result<Self, BatchError> {
-        unimplemented!("RecordBatchV0::decode")
+    pub fn decode(bytes: &[u8]) -> Result<Self, BatchError> {
+        use crate::compression::CompressionCodec;
+        use crate::header::{BatchHeader, HEADER_LEN};
+
+        // 1. Header (validates version + record_count/total_len caps).
+        let header = BatchHeader::decode(bytes)?;
+
+        // 2. The stored record region is everything after the header, bounded
+        //    by the header's total_len.
+        let total_len = header.total_len as usize;
+        if total_len < HEADER_LEN || total_len > bytes.len() {
+            return Err(BatchError::MalformedRecord(format!(
+                "total_len {total_len} inconsistent with buffer length {}",
+                bytes.len()
+            )));
+        }
+        let stored = &bytes[HEADER_LEN..total_len];
+
+        // 3. Verify CRC32C over the stored bytes BEFORE decompressing.
+        if crc32c::crc32c(stored) != header.crc32c {
+            return Err(BatchError::ChecksumMismatch);
+        }
+
+        // 4. Decompress.
+        let codec = CompressionCodec::from_u8(header.compression)
+            .map_err(|_| BatchError::MalformedRecord("unknown compression codec".into()))?;
+        let raw = codec.decompress(stored)?;
+
+        // 5. Walk the blob, decoding exactly record_count entries.
+        let mut records = Vec::with_capacity(header.record_count as usize);
+        let mut offset = 0usize;
+        for _ in 0..header.record_count {
+            let (entry, consumed) = decode_entry(&raw[offset..], header.first_timestamp)?;
+            offset += consumed;
+            records.push(entry.into_record());
+        }
+        if offset != raw.len() {
+            return Err(BatchError::MalformedRecord(format!(
+                "{} trailing record bytes after {} entries",
+                raw.len() - offset,
+                header.record_count
+            )));
+        }
+
+        Ok(Self {
+            producer_id: header.producer_id,
+            producer_epoch: header.producer_epoch,
+            first_sequence: header.first_sequence,
+            first_timestamp: header.first_timestamp,
+            is_transactional: header.flags & 0b10 != 0,
+            records,
+        })
     }
 }
 
