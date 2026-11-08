@@ -1,4 +1,4 @@
- //! Record Batch v0 encoder and decoder.
+//! Record Batch v0 encoder and decoder.
 //!
 //! A [`RecordBatchV0`] is the fixed 44-byte [`crate::header::BatchHeader`]
 //! followed by the (optionally compressed) concatenation of individually
@@ -261,9 +261,8 @@ pub(crate) fn encode_entry(record: &Record, first_timestamp: u64) -> Result<Vec<
                 record.timestamp()
             ))
         })?;
-    let delta = u32::try_from(delta).map_err(|_| {
-        BatchError::MalformedRecord(format!("timestamp_delta {delta} exceeds u32"))
-    })?;
+    let delta = u32::try_from(delta)
+        .map_err(|_| BatchError::MalformedRecord(format!("timestamp_delta {delta} exceeds u32")))?;
 
     let mut flags = 0u8;
     if record.subject().is_some() {
@@ -627,7 +626,11 @@ mod batch_tests {
         assert_eq!(header.producer_id, batch.producer_id);
         assert_eq!(header.first_sequence, batch.first_sequence);
         assert_eq!(header.flags & 0b10, 0b10, "is_transactional bit");
-        assert_eq!(header.total_len as usize, bytes.len(), "total_len covers whole batch");
+        assert_eq!(
+            header.total_len as usize,
+            bytes.len(),
+            "total_len covers whole batch"
+        );
     }
 
     // AC #2: corrupting one payload byte fails decode with ChecksumMismatch.
