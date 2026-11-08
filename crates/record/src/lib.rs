@@ -2,6 +2,7 @@
 
 pub mod batch;
 pub mod compression;
+pub mod cursor;
 pub mod header;
 
 use bytes::Bytes;
