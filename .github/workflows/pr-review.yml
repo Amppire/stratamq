@@ -36,6 +36,7 @@ jobs:
           # Gemini Model Configuration (LiteLLM format: gemini/<model-name>)
           CONFIG.MODEL: "gemini/gemini-3.8-flash"
           CONFIG.FALLBACK_MODELS: "[gemini/gemini-3.6-flash]"
+          CONFIG.CUSTOM_MODEL_MAX_TOKENS: 1048576
 
           # Automated Review Behavior
           github_action_config.auto_review: "true"
