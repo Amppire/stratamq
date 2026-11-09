@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bitflags.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
 tokio-util = { version = "0.7", features = ["codec"] }
+strata-types = { path = "../types" }
+uuid.workspace = true
