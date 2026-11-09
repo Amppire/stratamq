@@ -45,6 +45,7 @@ define_uuid_id!(SubscriptionId);
 define_uuid_id!(ConsumerId);
 define_uuid_id!(ProducerId);
 define_uuid_id!(LeaseId);
+define_uuid_id!(SessionId);
 
 /// A source of wall-clock time, injected wherever the system needs "now".
 ///
