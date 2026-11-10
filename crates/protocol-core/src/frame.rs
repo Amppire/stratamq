@@ -33,7 +33,9 @@ impl FrameHeader {
 
     pub fn decode(src: &[u8]) -> Result<Self, ProtocolError> {
         if src.len() < FRAME_HEADER_LEN {
-            return Err(ProtocolError::MalformedPayload("Truncated frame header".into()));
+            return Err(ProtocolError::MalformedPayload(
+                "Truncated frame header".into(),
+            ));
         }
         let mut buf = src;
         let version = buf.get_u8();
