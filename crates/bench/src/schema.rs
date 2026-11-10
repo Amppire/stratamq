@@ -38,13 +38,17 @@ pub struct Semantics {
 }
 
 /// Latency percentiles in microseconds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct LatencyUs {
     pub p50: u64,
     pub p95: u64,
     pub p99: u64,
     pub p999: u64,
     pub p9999: u64,
+    /// Slowest observed sample.
+    pub max: u64,
+    /// Arithmetic mean.
+    pub mean: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -63,15 +67,15 @@ pub struct Resources {
 mod tests {
     use super::*;
 
-    /// The example from issue #11, plus the `p9999` field the issue's
-    /// requirements call for but its example omits.
+    /// The example from issue #11, plus the `p9999`, `max` and `mean`
+    /// fields that the issue's example omits.
     const EXAMPLE: &str = r#"{
         "scenario": "STORE-W1",
         "implementation": "hybrid-wal-object",
         "git_sha": "abc123",
         "environment": { "os": "mac", "cores": 10, "ram_gb": 32 },
         "semantics": { "durability": "fsync", "replication": 1 },
-        "latency_us": { "p50": 120, "p95": 450, "p99": 980, "p999": 1420, "p9999": 2100 },
+        "latency_us": { "p50": 120, "p95": 450, "p99": 980, "p999": 1420, "p9999": 2100, "max": 5000, "mean": 210.5 },
         "throughput": { "records_s": 85000, "mb_s": 85.0 },
         "resources": { "cpu_pct": 45.2, "rss_mb": 82.5 }
     }"#;
@@ -83,6 +87,8 @@ mod tests {
         assert_eq!(result.environment.cores, 10);
         assert_eq!(result.latency_us.p999, 1420);
         assert_eq!(result.latency_us.p9999, 2100);
+        assert_eq!(result.latency_us.max, 5000);
+        assert!((result.latency_us.mean - 210.5).abs() < f64::EPSILON);
         assert_eq!(result.throughput.records_s, 85_000);
     }
 
