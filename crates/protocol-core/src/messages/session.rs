@@ -20,17 +20,23 @@ pub struct WelcomeMessage {
     pub capabilities: Capabilities,
     pub max_frame_bytes: u32,
     pub max_batch_records: u32,
+    pub max_demand_records: u32,
     pub heartbeat_interval_ms: u32,
 }
 
 impl HelloMessage {
-    pub fn encode(&self, dst: &mut BytesMut) {
+    pub fn encode(&self, dst: &mut BytesMut) -> Result<(), ProtocolError> {
+        let id_bytes = self.client_id.as_bytes();
+        if id_bytes.len() > MAX_CLIENT_ID_LEN {
+            return Err(ProtocolError::ClientIdTooLong { len: id_bytes.len(), max: MAX_CLIENT_ID_LEN });
+        }
         dst.put_u8(self.version);
         dst.put_u8(self.compression);
         let id_bytes = self.client_id.as_bytes();
         dst.put_u16(id_bytes.len() as u16);
         dst.extend_from_slice(id_bytes);
         dst.put_u64(self.capabilities.bits());
+        Ok(())
     }
 
     pub fn decode(src: &mut Bytes) -> Result<Self, ProtocolError> {
@@ -76,12 +82,13 @@ impl WelcomeMessage {
         dst.put_u64(self.capabilities.bits());
         dst.put_u32(self.max_frame_bytes);
         dst.put_u32(self.max_batch_records);
+        dst.put_u32(self.max_demand_records);
         dst.put_u32(self.heartbeat_interval_ms);
     }
 
     pub fn decode(src: &mut Bytes) -> Result<Self, ProtocolError> {
-        // 1 (version) + 3 (pad) + 16 (session_id) + 8 (caps) + 4 (frame) + 4 (batch) + 4 (hb) = 40 bytes
-        if src.remaining() < 40 {
+        // 1 (version) + 3 (pad) + 16 (session_id) + 8 (caps) + 4 (frame) + 4 (batch) + 4 (hb) = 44 bytes
+        if src.remaining() < 44 {
             return Err(ProtocolError::MalformedPayload("Truncated Welcome".into()));
         }
 
@@ -95,6 +102,7 @@ impl WelcomeMessage {
         let capabilities = Capabilities::from_bits_truncate(src.get_u64());
         let max_frame_bytes = src.get_u32();
         let max_batch_records = src.get_u32();
+        let max_demand_records = src.get_u32();
         let heartbeat_interval_ms = src.get_u32();
 
         Ok(Self {
@@ -103,6 +111,7 @@ impl WelcomeMessage {
             capabilities,
             max_frame_bytes,
             max_batch_records,
+            max_demand_records,
             heartbeat_interval_ms,
         })
     }
