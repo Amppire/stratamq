@@ -8,6 +8,8 @@ mod handshake;
 mod frame;
 mod messages;
 mod opcode;
+#[cfg(test)]
+mod test;
 
 pub use capabilities::*;
 pub use codec::*;
