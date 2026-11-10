@@ -29,7 +29,6 @@ pub struct AppendResult {
     pub revision: Option<u64>,
     pub position: u64,
 }
-
 pub struct Journal {
     id: JournalId,
     records: Vec<Record>,
