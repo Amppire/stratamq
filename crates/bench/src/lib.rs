@@ -1,14 +1,10 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+#![forbid(unsafe_code)]
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+//! `strata-bench`: the P0 benchmark harness (`bench-core`).
+//!
+//! `lib.rs` is a thin wrapper: each concept lives in its own module.
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub mod generator;
+pub mod metrics;
+pub mod schema;
+pub mod traits;
