@@ -118,7 +118,12 @@ impl KeyedWorkState {
     }
 
     /// Extend a valid lease while retaining its key ownership.
-    pub fn extend_lease(&mut self, lease: Lease, now: u64, extension: u64) -> Result<Lease, WorkError> {
+    pub fn extend_lease(
+        &mut self,
+        lease: Lease,
+        now: u64,
+        extension: u64,
+    ) -> Result<Lease, WorkError> {
         self.work.extend_lease(lease, now, extension)
     }
 
@@ -388,7 +393,10 @@ mod tests {
 
     #[test]
     fn strict_block_can_be_explicitly_unblocked() {
-        let policy = RetryPolicy { max_attempts: 1, delay: RetryDelay::Immediate };
+        let policy = RetryPolicy {
+            max_attempts: 1,
+            delay: RetryDelay::Immediate,
+        };
         let mut keyed = KeyedWorkState::new(policy, KeyFailurePolicy::StrictBlock);
         let key = WorkKey::new("recoverable");
         let first = RecordId::new();
@@ -400,7 +408,10 @@ mod tests {
         assert!(keyed.is_key_blocked(&key));
         assert_eq!(keyed.unblock_key(&key), Some(next));
         assert!(!keyed.is_key_blocked(&key));
-        assert_eq!(keyed.acquire(ConsumerId::new(), 1200, 1000, 1)[0].record_id, next);
+        assert_eq!(
+            keyed.acquire(ConsumerId::new(), 1200, 1000, 1)[0].record_id,
+            next
+        );
     }
 
     #[test]
