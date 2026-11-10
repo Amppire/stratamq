@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use crate::{Lease, RetryPolicy, WorkError, WorkState, WorkStatus};
 use strata_types::{ConsumerId, RecordId};
@@ -17,10 +17,11 @@ impl WorkKey {
 #[derive(Debug)]
 pub struct KeyedWorkState {
     work: WorkState,
-    active_by_key: HashMap<WorkKey, RecordId>,
-    pending_by_key: HashMap<WorkKey, VecDeque<RecordId>>,
+    active_keys: HashMap<WorkKey, RecordId>,
+    pending_keys: HashMap<WorkKey, VecDeque<RecordId>>,
     record_keys: HashMap<RecordId, WorkKey>,
-    blocked_keys: HashSet<WorkKey>,
+    dead_letter_keys: HashMap<RecordId, WorkKey>,
+    blocked_keys: HashMap<WorkKey, RecordId>,
     failure_policy: KeyFailurePolicy,
 }
 
@@ -29,10 +30,11 @@ impl KeyedWorkState {
     pub fn new(retry_policy: RetryPolicy, failure_policy: KeyFailurePolicy) -> Self {
         Self {
             work: WorkState::new(retry_policy),
-            active_by_key: HashMap::new(),
-            pending_by_key: HashMap::new(),
+            active_keys: HashMap::new(),
+            pending_keys: HashMap::new(),
             record_keys: HashMap::new(),
-            blocked_keys: HashSet::new(),
+            dead_letter_keys: HashMap::new(),
+            blocked_keys: HashMap::new(),
             failure_policy,
         }
     }
@@ -44,33 +46,33 @@ impl KeyedWorkState {
         }
         self.record_keys.insert(record_id, key.clone());
 
-        if self.blocked_keys.contains(&key) || self.active_by_key.contains_key(&key) {
-            self.pending_by_key
+        if self.blocked_keys.contains_key(&key) || self.active_keys.contains_key(&key) {
+            self.pending_keys
                 .entry(key)
                 .or_default()
                 .push_back(record_id);
             return;
         }
-        self.active_by_key.insert(key, record_id);
+        self.active_keys.insert(key, record_id);
         self.work.register(record_id);
     }
 
     fn promote_next(&mut self, key: &WorkKey) -> Option<RecordId> {
-        self.active_by_key.remove(key);
+        self.active_keys.remove(key);
 
-        if self.blocked_keys.contains(key) {
+        if self.blocked_keys.contains_key(key) {
             return None;
         }
 
-        if let Some(pending) = self.pending_by_key.get_mut(key) {
+        if let Some(pending) = self.pending_keys.get_mut(key) {
             let Some(record_id) = pending.pop_front() else {
-                self.pending_by_key.remove(key);
+                self.pending_keys.remove(key);
                 return None;
             };
             if pending.is_empty() {
-                self.pending_by_key.remove(key);
+                self.pending_keys.remove(key);
             }
-            self.active_by_key.insert(key.clone(), record_id);
+            self.active_keys.insert(key.clone(), record_id);
             self.work.register(record_id);
             return Some(record_id);
         }
@@ -88,10 +90,11 @@ impl KeyedWorkState {
 
     fn handle_dead_letter(&mut self, record_id: RecordId) -> Option<RecordId> {
         let key = self.record_keys.remove(&record_id)?;
+        self.dead_letter_keys.insert(record_id, key.clone());
         match self.failure_policy {
             KeyFailurePolicy::StrictBlock => {
-                self.active_by_key.remove(&key);
-                self.blocked_keys.insert(key);
+                self.active_keys.remove(&key);
+                self.blocked_keys.insert(key, record_id);
                 None
             }
             KeyFailurePolicy::Relaxed => self.promote_next(&key),
@@ -111,12 +114,15 @@ impl KeyedWorkState {
         Ok(self.handle_dead_letter(lease.record_id))
     }
 
-    pub fn expire_leases(&mut self, now: u64) -> (Vec<RecordId>, Vec<RecordId>) {
+    pub fn expire_leases(&mut self, now: u64) -> (Vec<RecordId>, Vec<RecordId>, Vec<RecordId>) {
         let (ready_ids, dead_lettered_ids) = self.work.expire_leases(now);
+        let mut promoted_ids = Vec::new();
         for &record_id in &dead_lettered_ids {
-            self.handle_dead_letter(record_id);
+            if let Some(promoted) = self.handle_dead_letter(record_id) {
+                promoted_ids.push(promoted);
+            }
         }
-        (ready_ids, dead_lettered_ids)
+        (ready_ids, dead_lettered_ids, promoted_ids)
     }
     /// Promote retries that have reached their scheduled availability time.
     pub fn promote_retries(&mut self, now: u64) {
@@ -136,23 +142,31 @@ impl KeyedWorkState {
     /// Explicitly resume a key halted by the strict failure policy.
     /// The dead-lettered predecessor remains dead-lettered.
     pub fn unblock_key(&mut self, key: &WorkKey) -> Option<RecordId> {
-        if !self.blocked_keys.remove(key) {
-            return None;
-        }
+        self.blocked_keys.remove(key)?;
         self.promote_next(key)
     }
 
     #[must_use]
     pub fn is_key_active(&self, key: &WorkKey) -> bool {
-        self.active_by_key.contains_key(key)
+        self.active_keys.contains_key(key)
     }
     #[must_use]
     pub fn pending_count(&self, key: &WorkKey) -> usize {
-        self.pending_by_key.get(key).map_or(0, VecDeque::len)
+        self.pending_keys.get(key).map_or(0, VecDeque::len)
     }
     #[must_use]
     pub fn is_key_blocked(&self, key: &WorkKey) -> bool {
-        self.blocked_keys.contains(key)
+        self.blocked_keys.contains_key(key)
+    }
+    #[must_use]
+    pub fn blocking_record(&self, key: &WorkKey) -> Option<RecordId> {
+        self.blocked_keys.get(key).copied()
+    }
+    #[must_use]
+    pub fn key_for_record(&self, record_id: &RecordId) -> Option<&WorkKey> {
+        self.record_keys
+            .get(record_id)
+            .or_else(|| self.dead_letter_keys.get(record_id))
     }
     pub fn acquire(
         &mut self,
@@ -436,8 +450,9 @@ mod tests {
         assert_eq!(leases[0].record_id, rec1);
 
         // Advance time to 5000 and expire leases
-        let (expired, promoted) = keyed.expire_leases(5000);
+        let (expired, dead_lettered, promoted) = keyed.expire_leases(5000);
         assert_eq!(expired, vec![rec1]);
+        assert!(dead_lettered.is_empty());
         assert!(promoted.is_empty());
 
         // Key remains active with rec1, rec2 remains in pending queue
@@ -469,12 +484,15 @@ mod tests {
         assert_eq!(lease.record_id, rec1);
 
         // Expire lease at 4000 (> 1000 + 2000 = 3000)
-        let (ready, dead_lettered) = keyed.expire_leases(4000);
+        let (ready, dead_lettered, promoted) = keyed.expire_leases(4000);
         assert!(ready.is_empty());
         assert_eq!(dead_lettered, vec![rec1]);
+        assert!(promoted.is_empty());
 
-        // Key should be blocked under StrictBlock
+        // Key should be blocked under StrictBlock and link to the blocking record
         assert!(keyed.is_key_blocked(&key));
+        assert_eq!(keyed.blocking_record(&key), Some(rec1));
+        assert_eq!(keyed.key_for_record(&rec1), Some(&key));
         assert!(!keyed.is_key_active(&key));
         assert_eq!(keyed.pending_count(&key), 1);
 
@@ -502,9 +520,11 @@ mod tests {
         assert_eq!(lease.record_id, rec1);
 
         // Expire lease at 4000 (> 3000)
-        let (ready, dead_lettered) = keyed.expire_leases(4000);
+        let (ready, dead_lettered, promoted) = keyed.expire_leases(4000);
         assert!(ready.is_empty());
         assert_eq!(dead_lettered, vec![rec1]);
+        assert_eq!(promoted, vec![rec2]);
+        assert_eq!(keyed.key_for_record(&rec1), Some(&key));
 
         // Key should not be blocked; rec2 should be promoted
         assert!(!keyed.is_key_blocked(&key));
