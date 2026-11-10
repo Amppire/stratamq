@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use crate::{Lease, RetryPolicy, WorkError, WorkState, WorkStatus};
 use strata_types::{ConsumerId, RecordId};
