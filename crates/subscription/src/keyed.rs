@@ -17,10 +17,11 @@ impl WorkKey {
 #[derive(Debug)]
 pub struct KeyedWorkState {
     work: WorkState,
-    active_by_key: HashMap<WorkKey, RecordId>,
-    pending_by_key: HashMap<WorkKey, VecDeque<RecordId>>,
+    active_keys: HashMap<WorkKey, RecordId>,
+    pending_keys: HashMap<WorkKey, VecDeque<RecordId>>,
     record_keys: HashMap<RecordId, WorkKey>,
-    blocked_keys: HashSet<WorkKey>,
+    dead_letter_keys: HashMap<RecordId, WorkKey>,
+    blocked_keys: HashMap<WorkKey, RecordId>,
     failure_policy: KeyFailurePolicy,
 }
 
@@ -29,44 +30,49 @@ impl KeyedWorkState {
     pub fn new(retry_policy: RetryPolicy, failure_policy: KeyFailurePolicy) -> Self {
         Self {
             work: WorkState::new(retry_policy),
-            active_by_key: HashMap::new(),
-            pending_by_key: HashMap::new(),
+            active_keys: HashMap::new(),
+            pending_keys: HashMap::new(),
             record_keys: HashMap::new(),
-            blocked_keys: HashSet::new(),
+            dead_letter_keys: HashMap::new(),
+            blocked_keys: HashMap::new(),
             failure_policy,
         }
     }
 
     pub fn register(&mut self, record_id: RecordId, key: WorkKey) {
+        // A record must never be registered under multiple keys or queued twice.
+        if self.record_keys.contains_key(&record_id) || self.work.state(record_id).is_some() {
+            return;
+        }
         self.record_keys.insert(record_id, key.clone());
 
-        if self.blocked_keys.contains(&key) || self.active_by_key.contains_key(&key) {
-            self.pending_by_key
+        if self.blocked_keys.contains_key(&key) || self.active_keys.contains_key(&key) {
+            self.pending_keys
                 .entry(key)
                 .or_default()
                 .push_back(record_id);
             return;
         }
-        self.active_by_key.insert(key, record_id);
+        self.active_keys.insert(key, record_id);
         self.work.register(record_id);
     }
 
     fn promote_next(&mut self, key: &WorkKey) -> Option<RecordId> {
-        self.active_by_key.remove(key);
+        self.active_keys.remove(key);
 
-        if self.blocked_keys.contains(key) {
+        if self.blocked_keys.contains_key(key) {
             return None;
         }
 
-        if let Some(pending) = self.pending_by_key.get_mut(key) {
+        if let Some(pending) = self.pending_keys.get_mut(key) {
             let Some(record_id) = pending.pop_front() else {
-                self.pending_by_key.remove(key);
+                self.pending_keys.remove(key);
                 return None;
             };
             if pending.is_empty() {
-                self.pending_by_key.remove(key);
+                self.pending_keys.remove(key);
             }
-            self.active_by_key.insert(key.clone(), record_id);
+            self.active_keys.insert(key.clone(), record_id);
             self.work.register(record_id);
             return Some(record_id);
         }
@@ -82,6 +88,19 @@ impl KeyedWorkState {
         Ok(self.promote_next(&key))
     }
 
+    fn handle_dead_letter(&mut self, record_id: RecordId) -> Option<RecordId> {
+        let key = self.record_keys.remove(&record_id)?;
+        self.dead_letter_keys.insert(record_id, key.clone());
+        match self.failure_policy {
+            KeyFailurePolicy::StrictBlock => {
+                self.active_keys.remove(&key);
+                self.blocked_keys.insert(key, record_id);
+                None
+            }
+            KeyFailurePolicy::Relaxed => self.promote_next(&key),
+        }
+    }
+
     /// Called when a worker nacks a record.
     pub fn nack(&mut self, lease: Lease, now: u64) -> Result<Option<RecordId>, WorkError> {
         self.work.nack(lease, now)?;
@@ -92,33 +111,62 @@ impl KeyedWorkState {
         if !is_dead_lettered {
             return Ok(None);
         }
-        let Some(key) = self.record_keys.remove(&lease.record_id) else {
-            return Ok(None);
-        };
-        match self.failure_policy {
-            KeyFailurePolicy::StrictBlock => {
-                self.active_by_key.remove(&key);
-                self.blocked_keys.insert(key);
-                Ok(None)
-            }
-            KeyFailurePolicy::Relaxed => Ok(self.promote_next(&key)),
-        }
+        Ok(self.handle_dead_letter(lease.record_id))
     }
 
-    pub fn expire_leases(&mut self, now: u64) -> Vec<RecordId> {
-        self.work.expire_leases(now)
+    pub fn expire_leases(&mut self, now: u64) -> (Vec<RecordId>, Vec<RecordId>, Vec<RecordId>) {
+        let (ready_ids, dead_lettered_ids) = self.work.expire_leases(now);
+        let mut promoted_ids = Vec::new();
+        for &record_id in &dead_lettered_ids {
+            if let Some(promoted) = self.handle_dead_letter(record_id) {
+                promoted_ids.push(promoted);
+            }
+        }
+        (ready_ids, dead_lettered_ids, promoted_ids)
     }
+    /// Promote retries that have reached their scheduled availability time.
+    pub fn promote_retries(&mut self, now: u64) {
+        self.work.promote_retries(now);
+    }
+
+    /// Extend a valid lease while retaining its key ownership.
+    pub fn extend_lease(
+        &mut self,
+        lease: Lease,
+        now: u64,
+        extension: u64,
+    ) -> Result<Lease, WorkError> {
+        self.work.extend_lease(lease, now, extension)
+    }
+
+    /// Explicitly resume a key halted by the strict failure policy.
+    /// The dead-lettered predecessor remains dead-lettered.
+    pub fn unblock_key(&mut self, key: &WorkKey) -> Option<RecordId> {
+        self.blocked_keys.remove(key)?;
+        self.promote_next(key)
+    }
+
     #[must_use]
     pub fn is_key_active(&self, key: &WorkKey) -> bool {
-        self.active_by_key.contains_key(key)
+        self.active_keys.contains_key(key)
     }
     #[must_use]
     pub fn pending_count(&self, key: &WorkKey) -> usize {
-        self.pending_by_key.get(key).map_or(0, VecDeque::len)
+        self.pending_keys.get(key).map_or(0, VecDeque::len)
     }
     #[must_use]
     pub fn is_key_blocked(&self, key: &WorkKey) -> bool {
-        self.blocked_keys.contains(key)
+        self.blocked_keys.contains_key(key)
+    }
+    #[must_use]
+    pub fn blocking_record(&self, key: &WorkKey) -> Option<RecordId> {
+        self.blocked_keys.get(key).copied()
+    }
+    #[must_use]
+    pub fn key_for_record(&self, record_id: &RecordId) -> Option<&WorkKey> {
+        self.record_keys
+            .get(record_id)
+            .or_else(|| self.dead_letter_keys.get(record_id))
     }
     pub fn acquire(
         &mut self,
@@ -340,13 +388,50 @@ mod tests {
         assert!(keyed.acquire(consumer, 2000, 5000, 1).is_empty());
 
         // After retry delay elapses, promote retries
-        keyed.work.promote_retries(3600); // 1500 + 2000 = 3500
+        keyed.promote_retries(3600); // 1500 + 2000 = 3500
 
         // rec1 should be re-acquired (with bumped generation and delivery count)
         let reacquired = keyed.acquire(consumer, 3600, 5000, 1);
         assert_eq!(reacquired.len(), 1);
         assert_eq!(reacquired[0].record_id, rec1);
         assert_eq!(reacquired[0].generation, 2);
+    }
+
+    #[test]
+    fn duplicate_registration_does_not_reassign_or_queue_record() {
+        let mut keyed = KeyedWorkState::new(default_policy(), KeyFailurePolicy::StrictBlock);
+        let original = WorkKey::new("original");
+        let other = WorkKey::new("other");
+        let id = RecordId::new();
+        keyed.register(id, original.clone());
+        keyed.register(id, original.clone());
+        keyed.register(id, other.clone());
+        assert_eq!(keyed.pending_count(&original), 0);
+        assert!(!keyed.is_key_active(&other));
+        assert_eq!(keyed.acquire(ConsumerId::new(), 1000, 1000, 10).len(), 1);
+    }
+
+    #[test]
+    fn strict_block_can_be_explicitly_unblocked() {
+        let policy = RetryPolicy {
+            max_attempts: 1,
+            delay: RetryDelay::Immediate,
+        };
+        let mut keyed = KeyedWorkState::new(policy, KeyFailurePolicy::StrictBlock);
+        let key = WorkKey::new("recoverable");
+        let first = RecordId::new();
+        let next = RecordId::new();
+        keyed.register(first, key.clone());
+        keyed.register(next, key.clone());
+        let lease = keyed.acquire(ConsumerId::new(), 1000, 1000, 1)[0];
+        keyed.nack(lease, 1100).unwrap();
+        assert!(keyed.is_key_blocked(&key));
+        assert_eq!(keyed.unblock_key(&key), Some(next));
+        assert!(!keyed.is_key_blocked(&key));
+        assert_eq!(
+            keyed.acquire(ConsumerId::new(), 1200, 1000, 1)[0].record_id,
+            next
+        );
     }
 
     #[test]
@@ -365,8 +450,10 @@ mod tests {
         assert_eq!(leases[0].record_id, rec1);
 
         // Advance time to 5000 and expire leases
-        let expired = keyed.expire_leases(5000);
+        let (expired, dead_lettered, promoted) = keyed.expire_leases(5000);
         assert_eq!(expired, vec![rec1]);
+        assert!(dead_lettered.is_empty());
+        assert!(promoted.is_empty());
 
         // Key remains active with rec1, rec2 remains in pending queue
         assert!(keyed.is_key_active(&key));
@@ -376,5 +463,77 @@ mod tests {
         let reacquired = keyed.acquire(ConsumerId::new(), 5100, 3000, 1);
         assert_eq!(reacquired.len(), 1);
         assert_eq!(reacquired[0].record_id, rec1);
+    }
+
+    #[test]
+    fn expired_lease_dead_letter_strict_block_halts_key() {
+        let policy = RetryPolicy {
+            max_attempts: 1, // Expiring this lease reaches max attempts -> DeadLettered
+            delay: RetryDelay::Immediate,
+        };
+        let mut keyed = KeyedWorkState::new(policy, KeyFailurePolicy::StrictBlock);
+        let key = WorkKey::new("ledger-expiry-strict");
+        let rec1 = RecordId::new();
+        let rec2 = RecordId::new();
+        let consumer = ConsumerId::new();
+
+        keyed.register(rec1, key.clone());
+        keyed.register(rec2, key.clone());
+
+        let lease = keyed.acquire(consumer, 1000, 2000, 1)[0];
+        assert_eq!(lease.record_id, rec1);
+
+        // Expire lease at 4000 (> 1000 + 2000 = 3000)
+        let (ready, dead_lettered, promoted) = keyed.expire_leases(4000);
+        assert!(ready.is_empty());
+        assert_eq!(dead_lettered, vec![rec1]);
+        assert!(promoted.is_empty());
+
+        // Key should be blocked under StrictBlock and link to the blocking record
+        assert!(keyed.is_key_blocked(&key));
+        assert_eq!(keyed.blocking_record(&key), Some(rec1));
+        assert_eq!(keyed.key_for_record(&rec1), Some(&key));
+        assert!(!keyed.is_key_active(&key));
+        assert_eq!(keyed.pending_count(&key), 1);
+
+        // rec2 cannot be acquired because the key is blocked
+        let next = keyed.acquire(ConsumerId::new(), 4100, 2000, 1);
+        assert!(next.is_empty());
+    }
+
+    #[test]
+    fn expired_lease_dead_letter_relaxed_promotes_next_item() {
+        let policy = RetryPolicy {
+            max_attempts: 1, // Expiring this lease reaches max attempts -> DeadLettered
+            delay: RetryDelay::Immediate,
+        };
+        let mut keyed = KeyedWorkState::new(policy, KeyFailurePolicy::Relaxed);
+        let key = WorkKey::new("metrics-expiry-relaxed");
+        let rec1 = RecordId::new();
+        let rec2 = RecordId::new();
+        let consumer = ConsumerId::new();
+
+        keyed.register(rec1, key.clone());
+        keyed.register(rec2, key.clone());
+
+        let lease = keyed.acquire(consumer, 1000, 2000, 1)[0];
+        assert_eq!(lease.record_id, rec1);
+
+        // Expire lease at 4000 (> 3000)
+        let (ready, dead_lettered, promoted) = keyed.expire_leases(4000);
+        assert!(ready.is_empty());
+        assert_eq!(dead_lettered, vec![rec1]);
+        assert_eq!(promoted, vec![rec2]);
+        assert_eq!(keyed.key_for_record(&rec1), Some(&key));
+
+        // Key should not be blocked; rec2 should be promoted
+        assert!(!keyed.is_key_blocked(&key));
+        assert!(keyed.is_key_active(&key));
+        assert_eq!(keyed.pending_count(&key), 0);
+
+        // rec2 can immediately be acquired
+        let next = keyed.acquire(ConsumerId::new(), 4100, 2000, 1);
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].record_id, rec2);
     }
 }
