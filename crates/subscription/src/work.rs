@@ -311,7 +311,8 @@ impl WorkState {
     }
 
     pub fn expire_leases(&mut self, now: u64) -> Vec<RecordId> {
-        let remaining = self.expiry_wheel.split_off(&now.saturating_add(1));
+        // Leases remain valid at expires_at; only earlier deadlines expire.
+        let remaining = self.expiry_wheel.split_off(&now);
         let elapsed = std::mem::replace(&mut self.expiry_wheel, remaining);
         let mut expired_ids = Vec::new();
 
@@ -321,7 +322,7 @@ impl WorkState {
                     continue;
                 };
                 if let WorkStatus::Leased { expires_at, .. } = state.status
-                    && expires_at <= now
+                    && expires_at < now
                 {
                     state.status = WorkStatus::Ready;
                     self.ready.push(record_id);
@@ -422,6 +423,27 @@ mod tests {
         assert!(new_lease.generation > old_lease.generation);
         let result = work.ack(old_lease, 9000);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn lease_is_valid_at_exact_expiration_boundary() {
+        let id = RecordId::new();
+        let mut work = WorkState::new(policy());
+        work.register(id);
+        let lease = work.acquire(ConsumerId::new(), 1000, 5000, 1)[0];
+        assert!(work.expire_leases(6000).is_empty());
+        assert!(matches!(work.state(id).unwrap().status, WorkStatus::Leased { .. }));
+        work.ack(lease, 6000).expect("lease is valid at its expiration timestamp");
+    }
+
+    #[test]
+    fn lease_expires_after_expiration_boundary() {
+        let id = RecordId::new();
+        let mut work = WorkState::new(policy());
+        work.register(id);
+        let lease = work.acquire(ConsumerId::new(), 1000, 5000, 1)[0];
+        assert_eq!(work.expire_leases(6001), vec![id]);
+        assert!(work.ack(lease, 6001).is_err());
     }
 
     #[test]
