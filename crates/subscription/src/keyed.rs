@@ -130,6 +130,10 @@ impl KeyedWorkState {
         self.work
             .acquire(consumer_id, now, lease_duration, max_records)
     }
+
+    pub fn promote_retries(&mut self, now: u64) {
+        self.work.promote_retries(now);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
