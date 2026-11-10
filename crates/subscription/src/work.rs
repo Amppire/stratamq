@@ -432,8 +432,12 @@ mod tests {
         work.register(id);
         let lease = work.acquire(ConsumerId::new(), 1000, 5000, 1)[0];
         assert!(work.expire_leases(6000).is_empty());
-        assert!(matches!(work.state(id).unwrap().status, WorkStatus::Leased { .. }));
-        work.ack(lease, 6000).expect("lease is valid at its expiration timestamp");
+        assert!(matches!(
+            work.state(id).unwrap().status,
+            WorkStatus::Leased { .. }
+        ));
+        work.ack(lease, 6000)
+            .expect("lease is valid at its expiration timestamp");
     }
 
     #[test]
