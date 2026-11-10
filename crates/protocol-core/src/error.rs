@@ -24,6 +24,19 @@ pub enum ProtocolError {
     MalformedPayload(String),
 }
 
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum DemandError {
+    #[error("Demand credit exceeded: requested {requested_records} records ({requested_bytes} bytes), available {available_records} records ({available_bytes} bytes)")]
+    CreditExceeded {
+        requested_records: u32,
+        available_records: u32,
+        requested_bytes: u32,
+        available_bytes: u32,
+    },
+    #[error("Demand window has expired at deadline {deadline_ms}")]
+    WindowExpired { deadline_ms: u64 },
+}
+
 impl From<std::io::Error> for ProtocolError {
     fn from(err: std::io::Error) -> Self {
         Self::Io(err.to_string())
