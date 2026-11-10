@@ -101,13 +101,6 @@ impl RetryPolicy {
     }
 }
 
-#[derive(Debug)]
-pub struct WorkState {
-    items: HashMap<RecordId, WorkItemState>,
-    ready: FifoReadyQueue,
-    retry_policy: RetryPolicy,
-}
-
 impl WorkState {
     #[must_use]
     pub fn new(retry_policy: RetryPolicy) -> Self {
@@ -318,28 +311,29 @@ impl WorkState {
     }
 
     pub fn expire_leases(&mut self, now: u64) -> (Vec<RecordId>, Vec<RecordId>) {
+        let remaining = self.expiry_wheel.split_off(&now);
+        let elapsed = std::mem::replace(&mut self.expiry_wheel, remaining);
         let mut ready_ids = Vec::new();
         let mut dead_lettered_ids = Vec::new();
-        for (record_id, state) in &mut self.items {
-            let expired = matches!(
-                state.status,
-                WorkStatus::Leased {
-                    expires_at,
-                    ..
-                } if expires_at < now
-            );
-            if expired {
-                if state.delivery_attempts >= self.retry_policy.max_attempts {
-                    state.status = WorkStatus::DeadLettered;
-                    dead_lettered_ids.push(*record_id);
-                } else {
-                    state.status = WorkStatus::Ready;
-                    ready_ids.push(*record_id);
+
+        for (_timestamp, record_ids) in elapsed {
+            for record_id in record_ids {
+                let Some(state) = self.items.get_mut(&record_id) else {
+                    continue;
+                };
+                if let WorkStatus::Leased { expires_at, .. } = state.status
+                    && expires_at < now
+                {
+                    if state.delivery_attempts >= self.retry_policy.max_attempts {
+                        state.status = WorkStatus::DeadLettered;
+                        dead_lettered_ids.push(record_id);
+                    } else {
+                        state.status = WorkStatus::Ready;
+                        ready_ids.push(record_id);
+                        self.ready.push(record_id);
+                    }
                 }
             }
-        }
-        for record_id in &ready_ids {
-            self.ready.push(*record_id);
         }
         (ready_ids, dead_lettered_ids)
     }
@@ -463,7 +457,8 @@ mod tests {
         let mut work = WorkState::new(policy());
         work.register(id);
         let lease = work.acquire(ConsumerId::new(), 1000, 5000, 1)[0];
-        assert!(work.expire_leases(6000).is_empty());
+        let (ready, dead_lettered) = work.expire_leases(6000);
+        assert!(ready.is_empty() && dead_lettered.is_empty());
         assert!(matches!(
             work.state(id).unwrap().status,
             WorkStatus::Leased { .. }
@@ -478,7 +473,9 @@ mod tests {
         let mut work = WorkState::new(policy());
         work.register(id);
         let lease = work.acquire(ConsumerId::new(), 1000, 5000, 1)[0];
-        assert_eq!(work.expire_leases(6001), vec![id]);
+        let (ready, dead_lettered) = work.expire_leases(6001);
+        assert_eq!(ready, vec![id]);
+        assert!(dead_lettered.is_empty());
         assert!(work.ack(lease, 6001).is_err());
     }
 
@@ -531,9 +528,10 @@ mod tests {
 
             // Keep workload construction and the result check outside the timed region.
             let start = Instant::now();
-            let expired = work.expire_leases(101);
+            let (ready, dead_lettered) = work.expire_leases(101);
             let elapsed = start.elapsed().as_micros();
-            assert_eq!(expired.len(), EXPIRED_LEASES);
+            assert_eq!(ready.len(), EXPIRED_LEASES);
+            assert!(dead_lettered.is_empty());
             elapsed_micros.push(elapsed);
         }
 
