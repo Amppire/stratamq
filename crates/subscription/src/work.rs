@@ -478,4 +478,38 @@ mod tests {
         assert_eq!(leases.len(), 1);
         assert_eq!(leases[0].record_id, record_id);
     }
+
+    #[test]
+    fn benchmark_expire_leases_with_many_idle_records() {
+        use std::time::Instant;
+
+        const IDLE_RECORDS: usize = 100_000;
+        const EXPIRED_LEASES: usize = 10;
+        const SAMPLES: usize = 10;
+        const TARGET_MICROS: u128 = 1_000;
+
+        let mut elapsed_micros = Vec::with_capacity(SAMPLES);
+        for _ in 0..SAMPLES {
+            let mut work = WorkState::new(policy());
+            for _ in 0..IDLE_RECORDS {
+                work.register(RecordId::new());
+            }
+            let leases = work.acquire(ConsumerId::new(), 0, 100, EXPIRED_LEASES);
+            assert_eq!(leases.len(), EXPIRED_LEASES);
+
+            // Keep workload construction and the result check outside the timed region.
+            let start = Instant::now();
+            let expired = work.expire_leases(100);
+            let elapsed = start.elapsed().as_micros();
+            assert_eq!(expired.len(), EXPIRED_LEASES);
+            elapsed_micros.push(elapsed);
+        }
+
+        elapsed_micros.sort_unstable();
+        let median_micros = elapsed_micros[SAMPLES / 2];
+        assert!(
+            median_micros <= TARGET_MICROS,
+            "expire_leases median was {median_micros}µs; target is {TARGET_MICROS}µs"
+        );
+    }
 }
