@@ -38,6 +38,10 @@ impl KeyedWorkState {
     }
 
     pub fn register(&mut self, record_id: RecordId, key: WorkKey) {
+        // A record must never be registered under multiple keys or queued twice.
+        if self.record_keys.contains_key(&record_id) || self.work.state(record_id).is_some() {
+            return;
+        }
         self.record_keys.insert(record_id, key.clone());
 
         if self.blocked_keys.contains(&key) || self.active_by_key.contains_key(&key) {
@@ -108,6 +112,25 @@ impl KeyedWorkState {
     pub fn expire_leases(&mut self, now: u64) -> Vec<RecordId> {
         self.work.expire_leases(now)
     }
+    /// Promote retries that have reached their scheduled availability time.
+    pub fn promote_retries(&mut self, now: u64) {
+        self.work.promote_retries(now);
+    }
+
+    /// Extend a valid lease while retaining its key ownership.
+    pub fn extend_lease(&mut self, lease: Lease, now: u64, extension: u64) -> Result<Lease, WorkError> {
+        self.work.extend_lease(lease, now, extension)
+    }
+
+    /// Explicitly resume a key halted by the strict failure policy.
+    /// The dead-lettered predecessor remains dead-lettered.
+    pub fn unblock_key(&mut self, key: &WorkKey) -> Option<RecordId> {
+        if !self.blocked_keys.remove(key) {
+            return None;
+        }
+        self.promote_next(key)
+    }
+
     #[must_use]
     pub fn is_key_active(&self, key: &WorkKey) -> bool {
         self.active_by_key.contains_key(key)
@@ -340,13 +363,44 @@ mod tests {
         assert!(keyed.acquire(consumer, 2000, 5000, 1).is_empty());
 
         // After retry delay elapses, promote retries
-        keyed.work.promote_retries(3600); // 1500 + 2000 = 3500
+        keyed.promote_retries(3600); // 1500 + 2000 = 3500
 
         // rec1 should be re-acquired (with bumped generation and delivery count)
         let reacquired = keyed.acquire(consumer, 3600, 5000, 1);
         assert_eq!(reacquired.len(), 1);
         assert_eq!(reacquired[0].record_id, rec1);
         assert_eq!(reacquired[0].generation, 2);
+    }
+
+    #[test]
+    fn duplicate_registration_does_not_reassign_or_queue_record() {
+        let mut keyed = KeyedWorkState::new(default_policy(), KeyFailurePolicy::StrictBlock);
+        let original = WorkKey::new("original");
+        let other = WorkKey::new("other");
+        let id = RecordId::new();
+        keyed.register(id, original.clone());
+        keyed.register(id, original.clone());
+        keyed.register(id, other.clone());
+        assert_eq!(keyed.pending_count(&original), 0);
+        assert!(!keyed.is_key_active(&other));
+        assert_eq!(keyed.acquire(ConsumerId::new(), 1000, 1000, 10).len(), 1);
+    }
+
+    #[test]
+    fn strict_block_can_be_explicitly_unblocked() {
+        let policy = RetryPolicy { max_attempts: 1, delay: RetryDelay::Immediate };
+        let mut keyed = KeyedWorkState::new(policy, KeyFailurePolicy::StrictBlock);
+        let key = WorkKey::new("recoverable");
+        let first = RecordId::new();
+        let next = RecordId::new();
+        keyed.register(first, key.clone());
+        keyed.register(next, key.clone());
+        let lease = keyed.acquire(ConsumerId::new(), 1000, 1000, 1)[0];
+        keyed.nack(lease, 1100).unwrap();
+        assert!(keyed.is_key_blocked(&key));
+        assert_eq!(keyed.unblock_key(&key), Some(next));
+        assert!(!keyed.is_key_blocked(&key));
+        assert_eq!(keyed.acquire(ConsumerId::new(), 1200, 1000, 1)[0].record_id, next);
     }
 
     #[test]
