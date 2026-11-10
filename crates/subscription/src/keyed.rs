@@ -109,7 +109,7 @@ impl KeyedWorkState {
         }
     }
 
-    pub fn expire_leases(&mut self, now: u64) -> Vec<RecordId> {
+    pub fn expire_leases(&mut self, now: u64) -> (Vec<RecordId>, Vec<RecordId>) {
         self.work.expire_leases(now)
     }
     /// Promote retries that have reached their scheduled availability time.
@@ -430,8 +430,9 @@ mod tests {
         assert_eq!(leases[0].record_id, rec1);
 
         // Advance time to 5000 and expire leases
-        let expired = keyed.expire_leases(5000);
+        let (expired, promoted) = keyed.expire_leases(5000);
         assert_eq!(expired, vec![rec1]);
+        assert!(promoted.is_empty());
 
         // Key remains active with rec1, rec2 remains in pending queue
         assert!(keyed.is_key_active(&key));
