@@ -28,7 +28,10 @@ impl HelloMessage {
     pub fn encode(&self, dst: &mut BytesMut) -> Result<(), ProtocolError> {
         let id_bytes = self.client_id.as_bytes();
         if id_bytes.len() > MAX_CLIENT_ID_LEN {
-            return Err(ProtocolError::ClientIdTooLong { len: id_bytes.len(), max: MAX_CLIENT_ID_LEN });
+            return Err(ProtocolError::ClientIdTooLong {
+                len: id_bytes.len(),
+                max: MAX_CLIENT_ID_LEN,
+            });
         }
         dst.put_u8(self.version);
         dst.put_u8(self.compression);
