@@ -86,6 +86,18 @@ impl KeyedWorkState {
         Ok(self.promote_next(&key))
     }
 
+    fn handle_dead_letter(&mut self, record_id: RecordId) -> Option<RecordId> {
+        let key = self.record_keys.remove(&record_id)?;
+        match self.failure_policy {
+            KeyFailurePolicy::StrictBlock => {
+                self.active_by_key.remove(&key);
+                self.blocked_keys.insert(key);
+                None
+            }
+            KeyFailurePolicy::Relaxed => self.promote_next(&key),
+        }
+    }
+
     /// Called when a worker nacks a record.
     pub fn nack(&mut self, lease: Lease, now: u64) -> Result<Option<RecordId>, WorkError> {
         self.work.nack(lease, now)?;
@@ -96,21 +108,15 @@ impl KeyedWorkState {
         if !is_dead_lettered {
             return Ok(None);
         }
-        let Some(key) = self.record_keys.remove(&lease.record_id) else {
-            return Ok(None);
-        };
-        match self.failure_policy {
-            KeyFailurePolicy::StrictBlock => {
-                self.active_by_key.remove(&key);
-                self.blocked_keys.insert(key);
-                Ok(None)
-            }
-            KeyFailurePolicy::Relaxed => Ok(self.promote_next(&key)),
-        }
+        Ok(self.handle_dead_letter(lease.record_id))
     }
 
     pub fn expire_leases(&mut self, now: u64) -> (Vec<RecordId>, Vec<RecordId>) {
-        return self.work.expire_leases(now);
+        let (ready_ids, dead_lettered_ids) = self.work.expire_leases(now);
+        for &record_id in &dead_lettered_ids {
+            self.handle_dead_letter(record_id);
+        }
+        (ready_ids, dead_lettered_ids)
     }
     /// Promote retries that have reached their scheduled availability time.
     pub fn promote_retries(&mut self, now: u64) {
@@ -442,5 +448,72 @@ mod tests {
         let reacquired = keyed.acquire(ConsumerId::new(), 5100, 3000, 1);
         assert_eq!(reacquired.len(), 1);
         assert_eq!(reacquired[0].record_id, rec1);
+    }
+
+    #[test]
+    fn expired_lease_dead_letter_strict_block_halts_key() {
+        let policy = RetryPolicy {
+            max_attempts: 1, // Expiring this lease reaches max attempts -> DeadLettered
+            delay: RetryDelay::Immediate,
+        };
+        let mut keyed = KeyedWorkState::new(policy, KeyFailurePolicy::StrictBlock);
+        let key = WorkKey::new("ledger-expiry-strict");
+        let rec1 = RecordId::new();
+        let rec2 = RecordId::new();
+        let consumer = ConsumerId::new();
+
+        keyed.register(rec1, key.clone());
+        keyed.register(rec2, key.clone());
+
+        let lease = keyed.acquire(consumer, 1000, 2000, 1)[0];
+        assert_eq!(lease.record_id, rec1);
+
+        // Expire lease at 4000 (> 1000 + 2000 = 3000)
+        let (ready, dead_lettered) = keyed.expire_leases(4000);
+        assert!(ready.is_empty());
+        assert_eq!(dead_lettered, vec![rec1]);
+
+        // Key should be blocked under StrictBlock
+        assert!(keyed.is_key_blocked(&key));
+        assert!(!keyed.is_key_active(&key));
+        assert_eq!(keyed.pending_count(&key), 1);
+
+        // rec2 cannot be acquired because the key is blocked
+        let next = keyed.acquire(ConsumerId::new(), 4100, 2000, 1);
+        assert!(next.is_empty());
+    }
+
+    #[test]
+    fn expired_lease_dead_letter_relaxed_promotes_next_item() {
+        let policy = RetryPolicy {
+            max_attempts: 1, // Expiring this lease reaches max attempts -> DeadLettered
+            delay: RetryDelay::Immediate,
+        };
+        let mut keyed = KeyedWorkState::new(policy, KeyFailurePolicy::Relaxed);
+        let key = WorkKey::new("metrics-expiry-relaxed");
+        let rec1 = RecordId::new();
+        let rec2 = RecordId::new();
+        let consumer = ConsumerId::new();
+
+        keyed.register(rec1, key.clone());
+        keyed.register(rec2, key.clone());
+
+        let lease = keyed.acquire(consumer, 1000, 2000, 1)[0];
+        assert_eq!(lease.record_id, rec1);
+
+        // Expire lease at 4000 (> 3000)
+        let (ready, dead_lettered) = keyed.expire_leases(4000);
+        assert!(ready.is_empty());
+        assert_eq!(dead_lettered, vec![rec1]);
+
+        // Key should not be blocked; rec2 should be promoted
+        assert!(!keyed.is_key_blocked(&key));
+        assert!(keyed.is_key_active(&key));
+        assert_eq!(keyed.pending_count(&key), 0);
+
+        // rec2 can immediately be acquired
+        let next = keyed.acquire(ConsumerId::new(), 4100, 2000, 1);
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].record_id, rec2);
     }
 }
