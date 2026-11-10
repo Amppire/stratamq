@@ -52,7 +52,7 @@ impl Decoder for FrameCodec {
 
         // Step 4: Wait until the complete payload is in the buffer
         if src.len() < total_frame_len {
-            src.reserve(total_frame_len - src.len());
+            src.reserve((total_frame_len - src.len()).min(64 * 1024));
             return Ok(None);
         }
 
@@ -68,6 +68,13 @@ impl Encoder<Frame> for FrameCodec {
     type Error = ProtocolError;
 
     fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let payload_len = u32::try_from(item.payload.len()).map_err(|_| ProtocolError::FrameTooLarge { size: u32::MAX, max: self.limits.max_frame_bytes })?;
+        if payload_len > self.limits.max_frame_bytes {
+            return Err(ProtocolError::FrameTooLarge { size: payload_len, max: self.limits.max_frame_bytes });
+        }
+        if item.header.payload_len != payload_len {
+            return Err(ProtocolError::MalformedPayload("Header payload length does not match payload".into()));
+        }
         let total_len = FRAME_HEADER_LEN + item.payload.len();
         dst.reserve(total_len);
         item.header.encode(dst);
