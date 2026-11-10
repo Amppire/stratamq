@@ -295,8 +295,9 @@ impl WorkState {
         }
     }
 
-    pub fn expire_leases(&mut self, now: u64) -> Vec<RecordId> {
+    pub fn expire_leases(&mut self, now: u64) -> (Vec<RecordId>, Vec<RecordId>) {
         let mut ready_ids = Vec::new();
+        let mut dead_lettered_ids = Vec::new();
         for (record_id, state) in &mut self.items {
             let expired = matches!(
                 state.status,
@@ -306,14 +307,19 @@ impl WorkState {
                 } if expires_at < now
             );
             if expired {
-                state.status = WorkStatus::Ready;
-                ready_ids.push(*record_id);
+                if state.delivery_attempts >= self.retry_policy.max_attempts {
+                    state.status = WorkStatus::DeadLettered;
+                    dead_lettered_ids.push(*record_id);
+                } else {
+                    state.status = WorkStatus::Ready;
+                    ready_ids.push(*record_id);
+                }
             }
         }
         for record_id in &ready_ids {
             self.ready.push(*record_id);
         }
-        ready_ids
+        (ready_ids, dead_lettered_ids)
     }
 }
 
@@ -386,6 +392,27 @@ mod tests {
         let second = work.acquire(ConsumerId::new(), 8000, 5000, 1);
         assert_eq!(second.len(), 1);
         assert!(second[0].generation > first[0].generation);
+    }
+
+    #[test]
+    fn expired_lease_at_attempt_limit_is_dead_lettered() {
+        let record_id = RecordId::new();
+        let mut work = WorkState::new(policy());
+        work.register(record_id);
+
+        for now in [1000, 3000] {
+            let lease = work.acquire(ConsumerId::new(), now, 1000, 1)[0];
+            assert_eq!(work.expire_leases(lease.expires_at + 1).0, vec![record_id]);
+        }
+
+        let lease = work.acquire(ConsumerId::new(), 5000, 1000, 1)[0];
+        let (ready_ids, dead_lettered_ids) = work.expire_leases(lease.expires_at + 1);
+        assert!(ready_ids.is_empty());
+        assert_eq!(dead_lettered_ids, vec![record_id]);
+        assert!(matches!(
+            work.state(record_id).unwrap().status,
+            WorkStatus::DeadLettered
+        ));
     }
 
     #[test]
