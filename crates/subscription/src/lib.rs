@@ -8,6 +8,9 @@ mod stream;
 mod subscription;
 mod work;
 
+#[cfg(test)]
+mod test;
+
 pub use broadcast::*;
 pub use error::*;
 pub use keyed::*;
