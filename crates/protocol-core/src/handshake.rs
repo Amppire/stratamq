@@ -1,5 +1,9 @@
+use crate::{
+    capabilities::Capabilities,
+    error::ProtocolError,
+    messages::{HelloMessage, WelcomeMessage},
+};
 use strata_types::SessionId;
-use crate::{capabilities::Capabilities, error::ProtocolError, messages::{HelloMessage, WelcomeMessage}};
 
 pub const PROTOCOL_VERSION: u8 = 0;
 
@@ -24,7 +28,10 @@ impl Default for ServerHandshakeConfig {
     }
 }
 
-pub fn negotiate(hello: &HelloMessage, config: &ServerHandshakeConfig) -> Result<WelcomeMessage, ProtocolError> {
+pub fn negotiate(
+    hello: &HelloMessage,
+    config: &ServerHandshakeConfig,
+) -> Result<WelcomeMessage, ProtocolError> {
     // 1. Base protocol compatibility check
     if hello.version != config.version {
         return Err(ProtocolError::IncompatibleVersion {
@@ -35,7 +42,7 @@ pub fn negotiate(hello: &HelloMessage, config: &ServerHandshakeConfig) -> Result
 
     // 2. Capability negotiation: clear unknown or unsupported bits
     let negotiated_capabilities = hello.capabilities & config.capabilities;
-    
+
     // 3. Generate session Id
     let session_id = SessionId::new();
 
@@ -53,7 +60,7 @@ pub fn negotiate(hello: &HelloMessage, config: &ServerHandshakeConfig) -> Result
 mod tests {
     use bytes::BytesMut;
 
-use super::*;
+    use super::*;
 
     #[test]
     fn welcome_message_roundtrip_preserves_session_id() {

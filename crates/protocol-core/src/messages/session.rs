@@ -1,5 +1,5 @@
-use bytes::{Buf, BufMut, Bytes, BytesMut};
 use crate::{ProtocolError, capabilities::Capabilities};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use strata_types::SessionId;
 use uuid::Uuid;
 
@@ -50,7 +50,9 @@ impl HelloMessage {
         }
 
         if src.remaining() < id_len + 8 {
-            return Err(ProtocolError::MalformedPayload("Truncated client_id or capabilities".into()));
+            return Err(ProtocolError::MalformedPayload(
+                "Truncated client_id or capabilities".into(),
+            ));
         }
 
         let client_id = String::from_utf8(src.split_to(id_len).to_vec())

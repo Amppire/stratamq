@@ -26,7 +26,9 @@ pub enum ProtocolError {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DemandError {
-    #[error("Demand credit exceeded: requested {requested_records} records ({requested_bytes} bytes), available {available_records} records ({available_bytes} bytes)")]
+    #[error(
+        "Demand credit exceeded: requested {requested_records} records ({requested_bytes} bytes), available {available_records} records ({available_bytes} bytes)"
+    )]
     CreditExceeded {
         requested_records: u32,
         available_records: u32,

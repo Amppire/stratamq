@@ -1,8 +1,8 @@
 #[cfg(test)]
-
 mod tests {
-    use super::*;
-    use crate::{KeyFailurePolicy, KeyedWorkState, RetryDelay, RetryPolicy, WorkKey, WorkState, WorkStatus};
+    use crate::{
+        KeyFailurePolicy, KeyedWorkState, RetryDelay, RetryPolicy, WorkKey, WorkState, WorkStatus,
+    };
     use strata_types::{ConsumerId, RecordId};
 
     fn policy() -> RetryPolicy {
