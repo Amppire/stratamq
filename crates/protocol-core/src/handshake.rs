@@ -13,6 +13,7 @@ pub struct ServerHandshakeConfig {
     pub capabilities: Capabilities,
     pub max_frame_bytes: u32,
     pub max_batch_records: u32,
+    pub max_demand_records: u32,
     pub heartbeat_interval_ms: u32,
 }
 
@@ -23,6 +24,7 @@ impl Default for ServerHandshakeConfig {
             capabilities: Capabilities::all(),
             max_frame_bytes: 16 * 1024 * 1024,
             max_batch_records: 10_000,
+            max_demand_records: 10_000,
             heartbeat_interval_ms: 30_000,
         }
     }
@@ -52,6 +54,7 @@ pub fn negotiate(
         capabilities: negotiated_capabilities,
         max_frame_bytes: config.max_frame_bytes,
         max_batch_records: config.max_batch_records,
+        max_demand_records: config.max_demand_records,
         heartbeat_interval_ms: config.heartbeat_interval_ms,
     })
 }
@@ -71,18 +74,20 @@ mod tests {
             capabilities: Capabilities::BATCH_PUBLISH | Capabilities::WORK_LEASES,
             max_frame_bytes: 4 * 1024 * 1024,
             max_batch_records: 5000,
+            max_demand_records: 2500,
             heartbeat_interval_ms: 15000,
         };
 
         let mut buf = BytesMut::new();
         welcome.encode(&mut buf);
-        assert_eq!(buf.len(), 40);
+        assert_eq!(buf.len(), 44);
 
         let mut bytes = buf.freeze();
         let decoded = WelcomeMessage::decode(&mut bytes).expect("decode should succeed");
 
         assert_eq!(decoded.session_id, session_id);
         assert_eq!(decoded.capabilities, welcome.capabilities);
+        assert_eq!(decoded.max_demand_records, welcome.max_demand_records);
     }
 
     #[test]
