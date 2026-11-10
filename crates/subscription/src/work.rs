@@ -499,7 +499,7 @@ mod tests {
 
             // Keep workload construction and the result check outside the timed region.
             let start = Instant::now();
-            let expired = work.expire_leases(100);
+            let expired = work.expire_leases(101);
             let elapsed = start.elapsed().as_micros();
             assert_eq!(expired.len(), EXPIRED_LEASES);
             elapsed_micros.push(elapsed);
