@@ -1,5 +1,5 @@
 use crate::{FifoReadyQueue, ReadyQueue, WorkError};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, btree_map::Entry};
 use strata_types::{ConsumerId, LeaseId, RecordId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,6 +240,15 @@ impl WorkState {
             generation: lease.generation,
             expires_at: new_expiry,
         };
+        if let Entry::Occupied(mut entry) = self.expiry_wheel.entry(lease.expires_at) {
+            let list = entry.get_mut();
+            if let Some(pos) = list.iter().position(|id| *id == lease.record_id) {
+                list.swap_remove(pos);
+            }
+            if list.is_empty() {
+                entry.remove();
+            }
+        }
         self.expiry_wheel
             .entry(new_expiry)
             .or_default()
@@ -492,8 +501,31 @@ mod tests {
         let mut work = WorkState::new(policy());
         work.register(record_id);
         let lease = work.acquire(ConsumerId::new(), 1000, 5000, 1)[0];
+        let original_expires_at = lease.expires_at;
         let extended = work.extend_lease(lease, 2000, 5000).unwrap();
-        assert!(extended.expires_at > lease.expires_at);
+        assert!(extended.expires_at > original_expires_at);
+        assert!(!work.expiry_wheel.contains_key(&original_expires_at));
+        assert_eq!(
+            work.expiry_wheel.get(&extended.expires_at),
+            Some(&vec![record_id])
+        );
+
+        let (ready, dead_lettered) = work.expire_leases(original_expires_at + 1);
+        assert!(ready.is_empty() && dead_lettered.is_empty());
+    }
+
+    #[test]
+    fn repeated_extensions_do_not_accumulate_wheel_entries() {
+        let id = RecordId::new();
+        let mut work = WorkState::new(policy());
+        work.register(id);
+        let mut lease = work.acquire(ConsumerId::new(), 1000, 1000, 1)[0];
+
+        for now in (1500..5000).step_by(500) {
+            lease = work.extend_lease(lease, now, 1000).unwrap();
+            assert_eq!(work.expiry_wheel.len(), 1);
+            assert_eq!(work.expiry_wheel.get(&lease.expires_at), Some(&vec![id]));
+        }
     }
 
     #[test]
