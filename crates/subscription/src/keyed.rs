@@ -110,7 +110,7 @@ impl KeyedWorkState {
     }
 
     pub fn expire_leases(&mut self, now: u64) -> (Vec<RecordId>, Vec<RecordId>) {
-        self.work.expire_leases(now)
+        return self.work.expire_leases(now);
     }
     /// Promote retries that have reached their scheduled availability time.
     pub fn promote_retries(&mut self, now: u64) {
