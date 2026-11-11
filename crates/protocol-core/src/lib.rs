@@ -2,10 +2,10 @@
 
 mod capabilities;
 mod codec;
-mod error;
 mod demand;
-mod handshake;
+mod error;
 mod frame;
+mod handshake;
 mod messages;
 mod opcode;
 #[cfg(test)]

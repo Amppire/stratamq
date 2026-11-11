@@ -1,5 +1,5 @@
-use bytes::{Buf, BufMut, Bytes, BytesMut};
 use crate::error::ProtocolError;
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DemandWindow {
@@ -26,7 +26,9 @@ impl DemandWindow {
 
     pub fn decode(src: &mut Bytes) -> Result<Self, ProtocolError> {
         if src.remaining() < 16 {
-            return Err(ProtocolError::MalformedPayload("Truncated DemandWindow".into()));
+            return Err(ProtocolError::MalformedPayload(
+                "Truncated DemandWindow".into(),
+            ));
         }
         let max_records = src.get_u32();
         let max_bytes = src.get_u32();
@@ -51,7 +53,9 @@ impl WindowUpdateMessage {
 
     pub fn decode(src: &mut Bytes) -> Result<Self, ProtocolError> {
         if src.remaining() < 8 {
-            return Err(ProtocolError::MalformedPayload("Truncated WindowUpdate".into()));
+            return Err(ProtocolError::MalformedPayload(
+                "Truncated WindowUpdate".into(),
+            ));
         }
         let additional_records = src.get_u32();
         let additional_bytes = src.get_u32();

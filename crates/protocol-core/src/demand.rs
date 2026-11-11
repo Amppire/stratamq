@@ -69,10 +69,10 @@ impl DemandTracker {
         if self.remaining_records == 0 || self.remaining_bytes == 0 {
             return false;
         }
-        if let Some(deadline) = self.wait_deadline_ms {
-            if now_ms >= deadline {
-                return false;
-            }
+        if let Some(deadline) = self.wait_deadline_ms
+            && now_ms >= deadline
+        {
+            return false;
         }
         true
     }
