@@ -108,6 +108,7 @@ gantt
 | **A-06** | TCP Multiplexing Connection Actor | Dev 1 | A-05 | ⚪ Planned | Tokio framed async actor loop for multiplexed NMP streams |
 | **A-07** | Delivery Tournament (`DEL-S1`) | Dev 1 | A-05, B-03 | ⚪ Planned | Benchmark demand-window vs pull vs push semantics |
 | **A-08** | Transport Tournament (`NET-L1`/`W1`) | Dev 1 | A-06, B-03 | ⚪ Planned | Benchmark NMP/TCP vs NMP/QUIC under packet loss and latency |
+| **A-09** | NMP Draft 0 Semantic Closure ([#34](https://github.com/Amppire/stratamq/issues/34)) | Dev 1 | A-03, A-04, A-06 | ⚪ Planned | Freeze exact 24-byte layout, error scopes, retryability, GOAWAY, and reconnect behavior |
 | **B-01** | Clock Trait & Monotonic Time Injection | Dev 2 | None | ⚪ Planned | Mockable clock injection in Journal and WorkState |
 | **B-02** | `RecordBatchV0` Binary Layout & CRC32C | Dev 2 | Contract 2 | ⚪ Planned | Batch framing, sequence numbers, producer epoch validation |
 | **B-03** | Benchmark Core Harness & HDR Latency | Dev 2 | None | ⚪ Planned | Workload generators, HDR histogram samplers, JSON schema |
@@ -116,8 +117,11 @@ gantt
 | **B-06** | Codec Fuzz Target (`cargo-fuzz`) | Dev 2 | B-02 | ⚪ Planned | Continuous fuzz corpus for RecordBatch decoding |
 | **B-07** | Mixed-Workload Isolation (`MIX-1`/`MIX-2`)| Dev 2 | B-05, A-02 | ⚪ Planned | Verify interactive $p99 < 2\times$ baseline during replays |
 | **B-08** | Crash Recovery & Failure Injection | Dev 2 | B-05 | ⚪ Planned | SIGKILL, truncated WAL recovery, stale lease fencing |
+| **B-09** | Committed Identity Contract ([#32](https://github.com/Amppire/stratamq/issues/32)) | Dev 2 | B-02 | ⚪ Planned | Preserve RecordId across receipt, WAL, recovery, replay, and redelivery |
+| **B-10** | Durable State & Recovery Contract ([#35](https://github.com/Amppire/stratamq/issues/35)) | Both | B-01, B-05, B-08 | ⚪ Planned | Freeze subject-head, cursor, ACK/NACK, lease, retry, and keyed recovery outcomes |
+| **B-11** | Retention Safety & Phase Boundary ([#33](https://github.com/Amppire/stratamq/issues/33)) | Both | B-05, B-09 | ⚪ Planned | Define safe reclamation invariants and P1/P3/P4 implementation split |
 | **J-01** | End-to-End Ingress Integration | Both | A-06, B-02 | ⚪ Planned | Wire NMP frame parsing directly to storage append |
-| **J-02** | P0 Architecture Exit Review | Both | All P0 tasks | ⚪ Planned | Formal ADR tournament evaluation and P1 readiness check |
+| **J-02** | P0 Architecture Exit Review | Both | All P0 tasks, A-09, B-09, B-10, B-11 | ⚪ Planned | Formal ADR tournament evaluation, semantic closure, and P1 readiness check |
 
 ---
 
@@ -136,12 +140,21 @@ gantt
 #### Record Batch v0 Specification
 - [ ] Define `RecordBatchV0` binary layout with length prefixes, CRC32C, producer ID, epoch, sequence, and flags ([`crates/record`](crates/record))
 - [ ] Implement LZ4 and Zstandard batch compression codecs
+- [ ] Bound decompressed output and compression ratio before allocating ([#31](https://github.com/Amppire/stratamq/issues/31))
+- [ ] Freeze publication-versus-committed representation and stable `RecordId` recovery ([#32](https://github.com/Amppire/stratamq/issues/32))
 - [ ] Fuzz test decoder with `cargo-fuzz`
 
 #### Native Messaging Protocol (NMP Draft 0)
-- [ ] Binary frame header codec: `[version, flags, opcode, stream_id, request_id, payload_len]` ([`crates/protocol-core`](crates/protocol-core))
+- [ ] Exact 24-byte frame header codec: `[version, flags, opcode, stream_id, request_id, payload_len, reserved]` ([`crates/protocol-core`](crates/protocol-core))
 - [ ] Frame parser with defensive allocation bounds (`max_frame_bytes`, `max_batch_records`)
 - [ ] Implement demand-window accounting (`DEMAND` and `WINDOW_UPDATE`)
+- [ ] Freeze error scopes, retryability, `GOAWAY`, duplicate request, and reconnect behavior ([#34](https://github.com/Amppire/stratamq/issues/34))
+
+#### Semantic Closure & Recovery Contracts
+- [ ] Define durable response and recovery outcomes for publish, subject heads, cursors, ACK/NACK, retries, leases, and keyed state ([#35](https://github.com/Amppire/stratamq/issues/35))
+- [ ] Verify record append and per-subject revision-head advancement recover atomically
+- [ ] Define retention safety, earliest-available-position errors, and the P1/P3/P4 implementation boundary ([#33](https://github.com/Amppire/stratamq/issues/33))
+- [ ] Define authoritative lease-extension behavior for retained or reordered receipts ([#2](https://github.com/Amppire/stratamq/issues/2))
 
 #### Tournament Harnesses & Experiments ([`crates/bench`](crates/bench))
 - [ ] **Sharding Tournament**: Compare Coarse Partitions vs. Virtual Sharding (65k/262k) via Rendezvous Hashing (`SHARD-U1`, `SHARD-H1`, `SHARD-R1`)
@@ -161,6 +174,10 @@ Before graduating to Phase P1 (Single-Node Production Foundation), the project m
 - [ ] Sharding architecture selected with measured routing and rebalancing trade-offs (ADR-P0-001).
 - [ ] Default storage commit architecture and durability profiles chosen with benchmark evidence (ADR-P0-003, ADR-P0-004).
 - [ ] NMP Draft 0 framing and Record Batch v0 format validated and stabilized.
+- [ ] Committed `RecordId` remains stable across receipt, storage, recovery, replay, tier movement, and redelivery (#32).
+- [ ] Durable state and crash-recovery outcomes are normative for subject heads, cursor commits, work transitions, and keyed state (#35).
+- [ ] NMP Draft 0 has an exact encoded layout and complete minimum error/reconnect contract (#34).
+- [ ] Retention safety invariants and later-phase implementation boundaries are accepted (#33).
 - [ ] TCP vs. QUIC positioning decided with empirical measurements (ADR-P0-005).
 - [ ] Demand-window delivery validated against push/pull implementations (ADR-P0-006).
 - [ ] Shared vs. normalized batch representation decided with CPU and copy metrics (ADR-P0-007).

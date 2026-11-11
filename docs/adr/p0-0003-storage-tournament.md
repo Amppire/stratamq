@@ -13,4 +13,6 @@ Messaging workloads have divergent storage demands: interactive work queues requ
 
 ## Evidence Required & Decision Threshold
 - Run benchmarks `STORE-W1` (interactive work latency), `STORE-S1` (streaming throughput), and `STORE-R1` (cold replay).
+- Include stable record identity, atomic subject-revision heads, required subscription checkpoints, and retention-boundary metadata in every candidate. Results that omit required correctness state are not semantically equivalent.
+- Verify the documented publish receipt and recovery outcomes from [GitHub issue #35](https://github.com/Amppire/stratamq/issues/35), including zero acknowledged-record loss and deterministic OCC after restart.
 - **Threshold**: Hybrid WAL + Object wins as default if it provides within $2\times$ the commit latency of Local-First while enabling elastic storage and fast node recovery.

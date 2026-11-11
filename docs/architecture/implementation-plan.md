@@ -112,6 +112,12 @@ Optional logical substream within a Journal representing an independently ordere
 ### 4.5. Optimistic Concurrency Control
 Publish requests may specify `expected_revision` (`Any`, `Exact(u64)`, `NoSubject`). Commit succeeds only when the current subject revision matches the expected revision.
 
+### 4.6. Committed Identity
+A `RecordId` is assigned exactly once at commit and remains stable across the publication receipt, WAL, immutable segments, restart, replay, redelivery, compaction, and object-tier movement. P0 determines whether committed identity is encoded in the batch, derived from immutable storage coordinates, or stored in an atomically committed index. Publication input and committed storage may use different versioned representations; decoding durable data must never mint a replacement identity.
+
+### 4.7. Durable State Boundaries
+The response contract for publish, subject-head advancement, cursor commit, ACK/NACK, retry, dead-letter, lease, and keyed-state transitions defines what must survive a crash and which outcomes remain legal when a response is lost. P0 freezes these semantics; P1/P2 implement production checkpoints, snapshots, and recovery machinery.
+
 ---
 
 ## 5. Subscription and Ordering Semantics
@@ -134,6 +140,8 @@ Publish requests may specify `expected_revision` (`Any`, `Exact(u64)`, `NoSubjec
 Canonical binary multiplexed protocol over TCP (first) and QUIC (evaluated).
 - **Demand-Window Flow Control**: Consumer grants bounded credits (`max_records`, `max_bytes`, `deadline`, `continuous`). Replenished via `WINDOW_UPDATE`.
 - **Key Opcode Families**: Session, Metadata, Publish, Subscribe, Demand, Work, Stream, Replay, Atomic operations, Errors.
+- **Draft 0 Header**: Exactly 24 encoded big-endian bytes: `version:u8`, `flags:u8`, `opcode:u16`, `stream_id:u32`, `request_id:u64`, `payload_len:u32`, `reserved:u32`. The reserved field is zero in Draft 0; ABI padding is never serialized.
+- **Error and Reconnect Contract**: Errors declare request/stream/connection scope and retryability. Reconnect creates a new transport session; durable subscription state remains broker state, while streams and demand credits are recreated. Duplicate publication retries use producer epoch/sequence idempotency.
 
 ---
 
@@ -143,6 +151,11 @@ Three durability candidates evaluated in P0:
 - **Candidate A (Local-First)**: Append batch to WAL, fsync/quorum, local segments, optional tiering.
 - **Candidate B (Hybrid WAL + Object)**: Low-latency WAL/cache layer + background immutable segments to S3/object store (Default hypothesis).
 - **Candidate C (Object-Primary)**: Durably commit to object storage before ACK.
+
+Tournament candidates must include equivalent identity, subject-head, subscription-checkpoint, checksum, retention-boundary, and recovery metadata. A candidate cannot improve benchmark results by omitting state required by the public correctness contract.
+
+### 7.1. Retention Safety
+Retention is a Journal policy independent of consumer acknowledgment. A subscription does not pin records forever unless its declared durability policy explicitly does so. When a requested cursor or replay position predates the earliest available record, the broker returns a deterministic boundary error rather than silently repositioning. Work and keyed state may not retain dangling references to reclaimed payloads. P0 freezes these invariants; P1 implements single-node age/size reclamation, P3 defines replay-branch pinning and expiry, and P4 implements object-tier lifecycle behavior.
 
 ---
 
@@ -223,11 +236,11 @@ Tournaments for Sharding, Storage, Transport, Delivery, Batch format, and Mixed-
 
 | Phase | Description |
 |---|---|
-| **P0** | Architecture Validation: Semantic prototype, tournaments, RecordBatch v0, NMP Draft 0, ADRs. |
-| **P1** | Single-Node Production Foundation: Chosen storage/sharding, durable WAL, NMP/TCP, CLI. |
-| **P2** | Reliability & Recovery: Producer/business idempotency, timer wheels, crash recovery, DLQ. |
-| **P3** | Advanced Messaging: Replay branches, atomic local ops, causal metadata, work scheduler. |
-| **P4** | Object Storage & Durability Classes: S3 tiering, storage class profiles, cache/prefetch. |
+| **P0** | Architecture Validation: Semantic prototype, tournaments, identity/durability/retention contracts, RecordBatch v0, NMP Draft 0, ADRs. |
+| **P1** | Single-Node Production Foundation: Chosen storage/sharding, durable WAL and subject heads, cursor checkpoints, basic retention, NMP/TCP, CLI. |
+| **P2** | Reliability & Recovery: Producer/business idempotency, durable lease/retry recovery, crash recovery, DLQ tooling, optional session resumption. |
+| **P3** | Advanced Messaging: Replay branches and retention interaction, atomic local ops, causal metadata, work scheduler. |
+| **P4** | Object Storage & Durability Classes: S3 tiering, tier-aware retention, storage class profiles, cache/prefetch. |
 | **P5** | Resource Isolation: Multi-class resource budget scheduler. |
 | **P6** | Security: TLS, mTLS, JWT/OIDC, ACL/RBAC, audit logging. |
 | **P7** | Cluster Metadata: Metadata consensus, placement epochs, routing. |

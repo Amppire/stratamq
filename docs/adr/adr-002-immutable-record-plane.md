@@ -14,3 +14,5 @@ We separate the platform into two distinct architectural planes:
 ## Consequences
 - **Positive**: A single record can participate simultaneously in streaming consumption, competing worker queues, broadcast pub/sub, and historical replays without payload duplication.
 - **Negative**: Storage reclamation cannot be driven simply by message ACK; retention policies (TTL, max size, or compact rules) manage Record Plane lifecycle independently of consumer acknowledgments.
+
+Retention therefore requires an explicit safety contract: expired cursors fail with a deterministic earliest-available-position error, mutable state may not retain dangling references to reclaimed payloads, and tier movement preserves record identity and logical position. Replay-specific pinning and object-tier lifecycle remain later-phase implementations.

@@ -93,6 +93,8 @@ FrameHeader Draft 0 (24 bytes)
 ├───────────────────────────────────────────────────────────────┤
 │                       payload_len (u32)                       │
 ├───────────────────────────────────────────────────────────────┤
+│                        reserved (u32)                         │
+├───────────────────────────────────────────────────────────────┤
 │ payload bytes [payload_len]                                   │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -100,6 +102,9 @@ FrameHeader Draft 0 (24 bytes)
 - `stream_id`: Identifies the logical multiplexed session or subscription.
 - `request_id`: Correlates asynchronous request/response operations.
 - `payload_len`: Validated against `max_frame_bytes` before allocation.
+- `reserved`: Encoded as zero in Draft 0. A non-zero value is rejected unless assigned by a negotiated future version.
+
+All integers are big-endian. The seven fields total exactly 24 encoded bytes. Implementations must serialize fields explicitly and must not transmit Rust/C struct memory or ABI padding.
 
 ---
 
@@ -137,6 +142,8 @@ RecordBatchV0
   u32 crc32c
   bytes records[]
 ```
+
+Publication batches may omit broker-assigned identity, but a committed record has a stable UUIDv7 `RecordId`. P0 must freeze whether committed IDs are encoded in a committed batch variant, derived from immutable storage coordinates, or stored in an atomically committed side index. A record ID returned by `PUBLISH_RESULT` must be reproduced by every later delivery, recovery, and replay; decoding durable data must not mint a replacement identity. See [GitHub issue #32](https://github.com/Amppire/stratamq/issues/32).
 
 ---
 
@@ -205,6 +212,8 @@ In `Work` mode, `DELIVER_BATCH` includes per-record lease metadata:
 
 Stale generation attempts receive `STALE_LEASE` (error `0x0041`) and are deterministically rejected.
 
+Lease extension is evaluated against the broker's authoritative active lease. Retrying or reordering an older extension receipt with the same lease ID and generation must not shorten, resurrect, or move the current deadline into the past. Restart treatment of monotonic deadlines follows the durable-state recovery contract in [GitHub issue #35](https://github.com/Amppire/stratamq/issues/35).
+
 ---
 
 ## 12. Stream Cursor Operations
@@ -233,7 +242,54 @@ Stale generation attempts receive `STALE_LEASE` (error `0x0041`) and are determi
 
 ---
 
-## 15. Draft Opcode Registry
+## 15. Flow Control and Throttling
+
+Demand credits bound application delivery, but every connection also observes negotiated frame, queued-write, in-flight-request, and logical-stream limits. Exceeding a request limit returns a bounded request-scoped error when the connection remains safe; malformed framing or repeated limit violations may be connection-fatal.
+
+`SERVER_BUSY` is retryable and may include a bounded `retry_after_ms` hint. It does not imply that a publish was rejected unless the correlated receipt/error explicitly states that the request did not commit. After `GOAWAY`, the peer stops opening new streams and drains requests through the advertised last accepted request boundary before closing.
+
+---
+
+## 16. Errors and Retries
+
+Every `ERROR` frame includes `error_code`, `scope` (`request`, `stream`, or `connection`), `retryable`, the correlated `request_id` when available, and bounded diagnostic metadata.
+
+- **Request-scoped** errors reject one operation without closing its stream.
+- **Stream-scoped** errors close one logical stream while leaving the connection usable.
+- **Connection-scoped** errors send `GOAWAY` when safe and close the transport.
+- A client must not infer publish failure solely from a lost connection. It retries with the same producer epoch and sequence so the broker can return the prior receipt with `deduplicated = true`.
+- OCC conflicts, stale leases, unsupported scope, and malformed requests are non-retryable without application state changes.
+- `SERVER_BUSY`, transient storage unavailability, and selected leadership/routing changes may be retryable.
+
+---
+
+## 17. Security and Authentication
+
+Draft 0 uses TLS for TCP transport. Authentication mechanisms and credentials are negotiated during `HELLO`/`WELCOME` and completed through `AUTH` before protected operations. Authentication failures are connection-scoped. All strings, metadata collections, error details, and authentication payloads are bounded by negotiated limits before allocation.
+
+---
+
+## 18. Extensibility and Versioning
+
+The base version controls the frame layout. Optional capabilities enable message families without requiring lockstep upgrades. Unknown capability bits are cleared by the server; unknown opcodes or flag bits are rejected according to §16. Reserved fields remain zero until assigned by a later negotiated protocol version.
+
+Changes that alter committed identity, checksums, record interpretation, or recovery behavior require a versioned representation and migration/reversibility analysis.
+
+---
+
+## 19. P0 Open Questions
+
+P0 must close the following before Draft 0 is stabilized:
+
+1. Committed identity representation and publication-versus-storage batch relationship ([#32](https://github.com/Amppire/stratamq/issues/32)).
+2. Exact error code values, scopes, retryability, and receipt fields ([#34](https://github.com/Amppire/stratamq/issues/34)).
+3. Durable cursor, ACK/NACK, retry, and lease recovery boundaries ([#35](https://github.com/Amppire/stratamq/issues/35)).
+4. Retention-boundary errors and earliest-available-position discovery ([#33](https://github.com/Amppire/stratamq/issues/33)).
+5. Authentication payload schemas, which may remain a reserved capability until the security phase if the P0 transport is explicitly development-only.
+
+---
+
+## Appendix A. Draft Opcode Registry
 
 | Opcode | Name | Direction | Category |
 |---|---|---|---|
@@ -261,3 +317,34 @@ Stale generation attempts receive `STALE_LEASE` (error `0x0041`) and are determi
 | `0x03F0` | `HINT` | S → C | Flow Control |
 | `0x7FFE` | `ERROR` | Both | System |
 | `0x7FFF` | `GOAWAY` | Both | Lifecycle |
+
+## Appendix B. Limits and Defensive Parsing
+
+Negotiated limits include `max_frame_bytes`, `max_batch_records`, `max_demand_records`, `max_demand_bytes`, `max_logical_streams`, `max_in_flight_requests`, and bounded string/header/error metadata sizes. Length, count, compression output, and arithmetic bounds are checked before allocation. Compressed data is constrained by an absolute uncompressed limit and a configured compression-ratio policy.
+
+## Appendix C. Subscription Delivery Sequences
+
+- **Fetch-style stream**: `SUBSCRIBE → DEMAND(continuous=false) → DELIVER_BATCH → COMMIT_CURSOR`.
+- **Continuous stream**: `SUBSCRIBE → DEMAND(continuous=true) → DELIVER_BATCH* ↔ WINDOW_UPDATE*`.
+- **Work**: `SUBSCRIBE → DEMAND → DELIVER_BATCH(lease) → ACK_BATCH | NACK | EXTEND_LEASE`.
+- **Reconnect**: establish a new session, reopen the durable subscription, then grant new demand. Demand credits never silently transfer between sessions.
+
+## Appendix D. Session Resumption and Reconnection Considerations
+
+A transport reconnect creates a new session in Draft 0. Durable journal and subscription state remains broker state, while connection-local streams, request correlation, and demand credits are recreated. Existing work leases remain valid only under their original lease ID, consumer identity, generation, and deadline; reconnect does not weaken fencing. Durable session resumption may be added later behind a negotiated capability and is not required for P0.
+
+## Appendix E. Protocol Correctness Requirements
+
+1. A successful publish receipt is correlated to exactly one durable commit outcome.
+2. Duplicate producer sequence retries return the prior outcome rather than appending a second record.
+3. Record IDs returned at commit remain stable in delivery and recovery.
+4. Demand accounting never delivers beyond authorized record or byte credit.
+5. Stale or expired leases cannot acknowledge a newer delivery.
+6. Malformed or oversized input fails without panic or unbounded allocation.
+7. A cursor older than retention returns an explicit boundary error rather than silently repositioning.
+
+## Appendix F. Error Codes and Receipt Fields
+
+The P0 implementation must register codes for incompatible version, malformed frame, frame too large, unsupported opcode/capability, authentication failure, revision conflict, stale or expired lease, demand credit exceeded, cursor before retention, server busy, storage unavailable, corrupt batch, and unsupported atomic scope. The final numeric registry and retryability table are frozen through [GitHub issue #34](https://github.com/Amppire/stratamq/issues/34).
+
+`PUBLISH_RESULT` includes request correlation, assigned record IDs, commit timestamp, committed subject revision where applicable, producer epoch/sequence, `deduplicated`, and `durability_achieved`. Cursor and work-state result frames identify whether the state transition reached its documented durable boundary.

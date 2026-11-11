@@ -19,6 +19,7 @@ We implement **generation-fenced leases** with heartbeat extensions in `strata-s
    - Any validation operation (`ack`, `nack`, `extend_lease`) from the stale consumer fails with `WorkError::StaleGeneration` or `WorkError::LeaseExpired`, preventing split-brain writes.
 3. **Heartbeat Extensions (`extend_lease`)**:
    - Long-running workers can periodically extend their active lease before expiration without changing generations, provided their current lease remains valid.
+   - The broker calculates the extension from its authoritative active lease state. Retried or reordered older receipts with the same lease ID and generation cannot shorten, resurrect, or move the current deadline into the past.
 4. **Configurable Retry Policies (`RetryPolicy`)**:
    - Supports `Immediate`, `Fixed`, and `Exponential` delay schedules with a configurable `max_attempts` ceiling before automatically transitioning failed items to `WorkStatus::DeadLettered`.
 
@@ -30,3 +31,4 @@ We implement **generation-fenced leases** with heartbeat extensions in `strata-s
 - **Negative**:
   - Long-running workers must run active background heartbeat renewal loops.
   - Time coordination relies on monotonic clock timestamps.
+  - Process-local monotonic deadlines require an explicit reconstruction or conservative invalidation rule after restart; P0 freezes that semantic contract and P1/P2 implement durable recovery.
