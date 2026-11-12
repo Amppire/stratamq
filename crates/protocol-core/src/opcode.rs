@@ -59,3 +59,64 @@ impl TryFrom<u16> for Opcode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::FrameHeader;
+
+    #[test]
+    fn ping_opcode_mapping() {
+        assert_eq!(Opcode::try_from(0x0004), Ok(Opcode::Ping));
+        assert_eq!(Opcode::Ping as u16, 0x0004);
+        // Ensure 0x0005 (previous separate Pong mapping) is unmapped and rejected
+        assert_eq!(Opcode::try_from(0x0005), Err(0x0005));
+    }
+
+    #[test]
+    fn new_opcode_registry_values_mapping() {
+        assert_eq!(Opcode::try_from(0x0300), Ok(Opcode::CreateReplay));
+        assert_eq!(Opcode::CreateReplay as u16, 0x0300);
+
+        assert_eq!(Opcode::try_from(0x0310), Ok(Opcode::BeginOperation));
+        assert_eq!(Opcode::BeginOperation as u16, 0x0310);
+
+        assert_eq!(Opcode::try_from(0x0311), Ok(Opcode::CommitOperation));
+        assert_eq!(Opcode::CommitOperation as u16, 0x0311);
+
+        assert_eq!(Opcode::try_from(0x03F0), Ok(Opcode::Hint));
+        assert_eq!(Opcode::Hint as u16, 0x03F0);
+    }
+
+    #[test]
+    fn frame_header_decode_accepts_new_opcodes_and_ping() {
+        for (raw_op, expected_op) in [
+            (0x0004, Opcode::Ping),
+            (0x0300, Opcode::CreateReplay),
+            (0x0310, Opcode::BeginOperation),
+            (0x0311, Opcode::CommitOperation),
+            (0x03F0, Opcode::Hint),
+        ] {
+            let header = FrameHeader {
+                version: 0x00,
+                flags: 0,
+                opcode: expected_op,
+                stream_id: 1,
+                request_id: 42,
+                payload_len: 0,
+            };
+            let mut buf = bytes::BytesMut::new();
+            header.encode(&mut buf);
+            let decoded = FrameHeader::decode(&buf).expect("should decode valid opcode");
+            assert_eq!(decoded.opcode, expected_op);
+            assert_eq!(decoded.opcode as u16, raw_op);
+        }
+
+        // Test that 0x0005 is rejected by FrameHeader::decode
+        let mut raw_bytes = [0u8; 24];
+        raw_bytes[0] = 0x00; // version
+        raw_bytes[1] = 0x00; // flags
+        raw_bytes[2..4].copy_from_slice(&0x0005u16.to_be_bytes()); // opcode 0x0005
+        assert!(FrameHeader::decode(&raw_bytes).is_err());
+    }
+}
