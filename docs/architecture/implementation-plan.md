@@ -250,6 +250,18 @@ Tournaments for Sharding, Storage, Transport, Delivery, Batch format, and Mixed-
 | **P11**| Compatibility: Kafka migration adapter, AMQP adapter. |
 | **P12**| SDK Ecosystem & v1 Hardening: Multi-language SDKs, runbooks, v1 GA. |
 
+Detailed executable phase specifications:
+
+- [P0 Technical Specification](p0-spec.md): architecture validation and semantic closure.
+- [P1 Technical Specification](p1-spec.md): production-capable standalone broker.
+- [P2 Technical Specification](p2-spec.md): durable idempotency, work-state recovery, timing, and failure hardening.
+
+GitHub milestones:
+
+- [Phase P0: Architecture Validation](https://github.com/Amppire/stratamq/milestone/1)
+- [Phase P1: Single-Node Production Foundation](https://github.com/Amppire/stratamq/milestone/2)
+- [Phase P2: Reliability & Recovery](https://github.com/Amppire/stratamq/milestone/3)
+
 ---
 
 ## 18. Repository and Module Structure

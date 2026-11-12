@@ -74,6 +74,8 @@ Comprehensive engineering specifications and design records are located in [`doc
 - **[Product & Architecture Charter](docs/architecture/charter.md)**: Foundational thesis, market positioning, architectural invariants, non-goals, and quality attributes.
 - **[Implementation Plan](docs/architecture/implementation-plan.md)**: Comprehensive roadmap from P0 research to v1 GA, subsystem specifications, operational semantics, and risk analysis.
 - **[P0 Technical Specification](docs/architecture/p0-spec.md)**: Research tournament designs for sharding, storage, transport, delivery, and mixed-workload isolation.
+- **[P1 Technical Specification](docs/architecture/p1-spec.md)**: Production-capable single-node WAL, segments, recovery, durable cursors, retention, NMP/TCP runtime, and operability.
+- **[P2 Technical Specification](docs/architecture/p2-spec.md)**: Durable idempotency, work/timing state, DLQ recovery, checkpoints, and hostile-failure hardening.
 - **[Native Messaging Protocol (NMP) — Draft 0](docs/architecture/nmp-draft-0.md)**: Canonical wire protocol specification, binary framing, opcode registry, and demand windows.
 - **[Architecture Decision Register (ADR)](docs/adr/README.md)**: Authoritative index of foundational, experimental (P0), and planned architectural decisions.
 - **[System Architecture Overview](docs/architecture/overview.md)**: Detailed technical dive into the dual-plane model, OCC sequence, and consumption engines.

@@ -183,3 +183,62 @@ Before graduating to Phase P1 (Single-Node Production Foundation), the project m
 - [ ] Shared vs. normalized batch representation decided with CPU and copy metrics (ADR-P0-007).
 - [ ] Mixed-workload isolation strategy proven to preserve interactive $p99 < 2\times$ baseline (ADR-P0-009).
 - [ ] All tournament results captured in reproducible benchmark reports and accepted ADRs.
+
+---
+
+## 4. Phase P1: Single-Node Production Foundation
+
+P1 implements the accepted P0 contracts as a production-capable standalone broker. Full requirements, phase boundaries, dependencies, and exit criteria are defined in the [P1 Technical Specification](architecture/p1-spec.md).
+
+GitHub milestone: [Phase P1: Single-Node Production Foundation](https://github.com/Amppire/stratamq/milestone/2).
+
+| Task | Issue | Owner | Depends On | Status | Scope |
+|---|---|---|---|---|---|
+| **P1-01** | [#42](https://github.com/Amppire/stratamq/issues/42) | Haris + Shaunak | P0 exit (#18, #32–#35) | ⚪ Planned | Materialize accepted P0 decisions into the single-node architecture |
+| **P1-02** | [#38](https://github.com/Amppire/stratamq/issues/38) | Shaunak | P1-01 | ⚪ Planned | Durable WAL append, sync, backpressure, and commit receipts |
+| **P1-03** | [#36](https://github.com/Amppire/stratamq/issues/36) | Shaunak | P1-01, P1-02 | ⚪ Planned | Immutable segment roll, checksums, and sparse indexes |
+| **P1-04** | [#37](https://github.com/Amppire/stratamq/issues/37) | Shaunak | P1-02, P1-03 | ⚪ Planned | Startup recovery, manifest rebuild, and subject-head restoration |
+| **P1-05** | [#41](https://github.com/Amppire/stratamq/issues/41) | Haris | P1-01, P1-02 | ⚪ Planned | Durable stream cursor checkpoints |
+| **P1-06** | [#43](https://github.com/Amppire/stratamq/issues/43) | Shaunak | P1-03, P1-04, P1-05 | ⚪ Planned | Basic age/size retention and boundary errors |
+| **P1-07** | [#40](https://github.com/Amppire/stratamq/issues/40) | Haris | P1-01, P1-02, NMP Draft 0 | ⚪ Planned | Standalone NMP/TCP runtime and graceful shutdown |
+| **P1-08** | [#39](https://github.com/Amppire/stratamq/issues/39) | Haris + Shaunak | P1-04, P1-05, P1-07 | ⚪ Planned | End-to-end publish, stream, and work delivery |
+| **P1-09** | [#44](https://github.com/Amppire/stratamq/issues/44) | Haris | All subsystems (P1-01–P1-08) | ⚪ Planned | Configuration, metrics, diagnostics, and operator CLI |
+| **P1-10** | [#45](https://github.com/Amppire/stratamq/issues/45) | Haris + Shaunak | P1-02 through P1-09 | ⚪ Planned | Single-node acceptance, load, restart, and exit gate |
+
+### P1 Exit Gate
+
+- [ ] Zero acknowledged-record loss across the single-node crash matrix.
+- [ ] Stable record identity, positions, timestamps, and subject revisions across restart.
+- [ ] Durable cursor checkpoints and deterministic retention boundaries.
+- [ ] Bounded NMP/TCP publish and consumption paths.
+- [ ] Crash-consistent segment roll, recovery, and retention deletion.
+- [ ] Actionable configuration, metrics, diagnostics, and CLI workflows.
+
+---
+
+## 5. Phase P2: Reliability & Recovery
+
+P2 makes duplicate publication, work delivery, retries, delayed execution, DLQ operations, and recovery deterministic across crashes and hostile storage conditions. Full requirements are defined in the [P2 Technical Specification](architecture/p2-spec.md).
+
+GitHub milestone: [Phase P2: Reliability & Recovery](https://github.com/Amppire/stratamq/milestone/3).
+
+| Task | Issue | Owner | Depends On | Status | Scope |
+|---|---|---|---|---|---|
+| **P2-01** | [#49](https://github.com/Amppire/stratamq/issues/49) | Shaunak | P1 WAL/recovery (#37, #38, #45) | ⚪ Planned | Durable producer epoch and sequence idempotency |
+| **P2-02** | [#48](https://github.com/Amppire/stratamq/issues/48) | Shaunak | P2-01 storage patterns (#49) | ⚪ Planned | Application idempotency keys and deduplication policy |
+| **P2-03** | [#53](https://github.com/Amppire/stratamq/issues/53) | Haris | P1 state hooks (#39, #41, #45), #35 | ⚪ Planned | Persistent work, retry, DLQ, and keyed state |
+| **P2-04** | [#52](https://github.com/Amppire/stratamq/issues/52) | Haris | P2-03 (#53), #21 | ⚪ Planned | Restart-safe leases, retries, and delayed-delivery timers |
+| **P2-05** | [#50](https://github.com/Amppire/stratamq/issues/50) | Haris | P2-03 (#53) | ⚪ Planned | DLQ inspection, replay, and recovery operations |
+| **P2-06** | [#47](https://github.com/Amppire/stratamq/issues/47) | Shaunak | P2-01 through P2-04 (#48, #49, #52, #53) | ⚪ Planned | State snapshots, checkpoints, compaction, and bounded recovery |
+| **P2-07** | [#54](https://github.com/Amppire/stratamq/issues/54) | Shaunak | P1 recovery (#37), P2-06 (#47) | ⚪ Planned | Disk-full, corruption, stalled-I/O, and repeated-crash hardening |
+| **P2-08** | [#46](https://github.com/Amppire/stratamq/issues/46) | Haris | NMP reconnect baseline (#34, #40), P2-01 (#49) | ⚪ Planned | Optional negotiated NMP session resumption or explicit deferral |
+| **P2-09** | [#51](https://github.com/Amppire/stratamq/issues/51) | Haris + Shaunak | P2-01 through P2-08 | ⚪ Planned | Reliability, idempotency, recovery, and exit gate |
+
+### P2 Exit Gate
+
+- [ ] Duplicate transport and business requests satisfy their idempotency contracts.
+- [ ] Work, retry, DLQ, generation, and keyed state recover deterministically.
+- [ ] Lease/retry timing remains correct across restart and wall-clock changes.
+- [ ] DLQ replay is bounded, explicit, idempotent, and observable.
+- [ ] Checkpoints bound recovery time and metadata growth.
+- [ ] Disk-full, corruption, partial-write, stall, and repeated-crash tests fail closed.
