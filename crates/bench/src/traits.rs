@@ -125,6 +125,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use crate::mock::MemStorage;
 
     fn empty_batch() -> RecordBatch {
         RecordBatch {
@@ -134,46 +135,6 @@ mod tests {
             first_timestamp: 0,
             is_transactional: false,
             records: vec![],
-        }
-    }
-
-    /// Toy in-memory storage: proves the trait is implementable and usable
-    /// as `dyn StorageExperiment`.
-    #[derive(Default)]
-    struct MemStorage {
-        batches: Mutex<Vec<RecordBatch>>,
-    }
-
-    #[async_trait]
-    impl StorageExperiment for MemStorage {
-        async fn append(
-            &self,
-            batch: RecordBatch,
-            _durability: Durability,
-        ) -> Result<CommitReceipt, BenchError> {
-            let mut batches = self.batches.lock().unwrap();
-            batches.push(batch);
-            Ok(CommitReceipt {
-                first_offset: batches.len() as u64 - 1,
-            })
-        }
-
-        async fn read(&self, query: ReadRange) -> Result<RecordBatchSet, BenchError> {
-            let batches = self.batches.lock().unwrap();
-            let batches = batches
-                .iter()
-                .skip(query.from_offset as usize)
-                .take(query.max_batches as usize)
-                .cloned()
-                .collect();
-            Ok(RecordBatchSet { batches })
-        }
-
-        async fn recover(&self) -> Result<RecoveryReport, BenchError> {
-            Ok(RecoveryReport {
-                recovered_batches: self.batches.lock().unwrap().len() as u64,
-                truncated_bytes: 0,
-            })
         }
     }
 

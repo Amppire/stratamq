@@ -6,5 +6,7 @@
 
 pub mod generator;
 pub mod metrics;
+pub mod mock;
+pub mod runner;
 pub mod schema;
 pub mod traits;
