@@ -156,7 +156,13 @@ pub fn write_report(dir: &Path, result: &BenchResult) -> Result<PathBuf, RunErro
             .open(&path)
         {
             Ok(mut file) => {
-                file.write_all(json.as_bytes())?;
+                if let Err(e) = file.write_all(json.as_bytes()) {
+                    // Don't leave a truncated report behind; it would also
+                    // make this name look taken to later runs.
+                    drop(file);
+                    let _ = std::fs::remove_file(&path);
+                    return Err(e.into());
+                }
                 return Ok(path);
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => attempt += 1,
