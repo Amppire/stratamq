@@ -1,8 +1,8 @@
 //! Drives a candidate with a generated workload, times every operation and
 //! assembles the [`BenchResult`] report.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use strata_record::ProposedRecord;
@@ -116,15 +116,10 @@ fn environment() -> Environment {
     }
 }
 
-/// Current commit, or `"unknown"` outside a git checkout.
+/// Commit the binary was built from (captured by `build.rs`), or `"unknown"`
+/// when the build had no git checkout.
 fn git_sha() -> String {
-    Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .and_then(|out| String::from_utf8(out.stdout).ok())
-        .map_or_else(|| "unknown".to_owned(), |sha| sha.trim().to_owned())
+    env!("STRATA_BENCH_GIT_SHA").to_owned()
 }
 
 /// Writes `result` as pretty JSON to `dir/<scenario>-<implementation>-<unix
@@ -139,14 +134,35 @@ pub fn write_report(dir: &Path, result: &BenchResult) -> Result<PathBuf, RunErro
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    let name = format!(
-        "{}-{}-{secs}.json",
+    let stem = format!(
+        "{}-{}-{secs}",
         sanitize(&result.scenario),
         sanitize(&result.implementation)
     );
-    let path = dir.join(name);
-    std::fs::write(&path, json)?;
-    Ok(path)
+
+    // Create exclusively so a run in the same second never replaces an
+    // earlier report; on a collision retry with `-1`, `-2`, ...
+    let mut attempt = 0u32;
+    loop {
+        let name = if attempt == 0 {
+            format!("{stem}.json")
+        } else {
+            format!("{stem}-{attempt}.json")
+        };
+        let path = dir.join(name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(json.as_bytes())?;
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => attempt += 1,
+            Err(e) => return Err(e.into()),
+        }
+    }
 }
 
 /// Keeps file names to `[A-Za-z0-9_-]` so labels cannot escape `dir`.
@@ -230,6 +246,33 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
 
         assert_eq!(back, result);
+    }
+
+    #[tokio::test]
+    async fn same_second_reports_do_not_overwrite_each_other() {
+        let result = run_storage(&config(10), &MemStorage::default())
+            .await
+            .unwrap();
+        let dir = std::env::temp_dir().join(format!("strata-bench-collide-{}", std::process::id()));
+
+        let paths: Vec<_> = (0..3)
+            .map(|_| write_report(&dir, &result).unwrap())
+            .collect();
+        let files = std::fs::read_dir(&dir).unwrap().count();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(files, 3);
+        assert_eq!(
+            paths.iter().collect::<std::collections::HashSet<_>>().len(),
+            3
+        );
+    }
+
+    #[test]
+    fn git_sha_is_captured_at_build_time() {
+        let sha = git_sha();
+        assert!(!sha.is_empty());
+        assert!(sha == "unknown" || sha.len() == 40);
     }
 
     #[test]
