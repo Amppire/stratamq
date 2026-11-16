@@ -1,3 +1,4 @@
+use crate::keyed::WorkKey;
 use crate::work::Lease;
 use strata_types::{LeaseId, RecordId};
 use thiserror::Error;
@@ -42,4 +43,6 @@ pub enum WorkError {
     AlreadyCompletedOrDeadLettered { record_id: RecordId },
     #[error("Record {record_id:?} has already been completed")]
     AlreadyCompleted { record_id: RecordId },
+    #[error("Key is blocked due to strict failure policy: {key:?}")]
+    KeyBlocked { key: WorkKey },
 }
