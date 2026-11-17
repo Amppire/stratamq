@@ -1,4 +1,4 @@
-use crate::{error::DemandError, messages::DemandWindow};
+use crate::{error::DemandError, messages::DemandMessage};
 
 #[derive(Debug, Clone)]
 pub struct DemandLimits {
@@ -37,7 +37,7 @@ impl DemandTracker {
     }
 
     /// Apply a new DEMAND command, resetting or initializing the credit window
-    pub fn grant(&mut self, demand: DemandWindow, now: u64) {
+    pub fn grant(&mut self, demand: DemandMessage, now: u64) {
         // Enforce server bounds to prevent integer overflow attacks
         self.remaining_records = demand.max_records.min(self.limits.max_demand_records);
         self.remaining_bytes = demand.max_bytes.min(self.limits.max_demand_bytes);

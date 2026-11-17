@@ -2,7 +2,7 @@ use crate::error::ProtocolError;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DemandWindow {
+pub struct DemandMessage {
     pub max_records: u32,
     pub max_bytes: u32,
     pub wait: u32,
@@ -15,7 +15,7 @@ pub struct WindowUpdateMessage {
     pub additional_bytes: u32,
 }
 
-impl DemandWindow {
+impl DemandMessage {
     pub fn encode(&self, dst: &mut BytesMut) {
         dst.put_u32(self.max_records);
         dst.put_u32(self.max_bytes);
@@ -27,7 +27,7 @@ impl DemandWindow {
     pub fn decode(src: &mut Bytes) -> Result<Self, ProtocolError> {
         if src.remaining() < 16 {
             return Err(ProtocolError::MalformedPayload(
-                "Truncated DemandWindow".into(),
+                "Truncated DemandMessage".into(),
             ));
         }
         let max_records = src.get_u32();

@@ -5,7 +5,7 @@ mod tests {
     #[test]
     fn credit_exhaustion_halts_delivery() {
         let mut tracker = DemandTracker::new(DemandLimits::default());
-        let demand = DemandWindow {
+        let demand = DemandMessage {
             max_records: 10,
             max_bytes: 1000,
             wait: 5000,
@@ -29,7 +29,7 @@ mod tests {
     fn over_deduction_returns_error() {
         let mut tracker = DemandTracker::new(DemandLimits::default());
         tracker.grant(
-            DemandWindow {
+            DemandMessage {
                 max_records: 5,
                 max_bytes: 500,
                 wait: 0,
