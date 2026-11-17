@@ -1,8 +1,11 @@
 #[cfg(test)]
 mod tests {
+    use crate::{
+        Capabilities, DemandError, DemandLimits, DemandMessage, DemandTracker, HelloMessage,
+        Opcode, ProtocolError, ServerHandshakeConfig, WelcomeMessage, negotiate,
+    };
     use bytes::BytesMut;
-use strata_types::SessionId;
-    use crate::{Capabilities, DemandError, DemandLimits, DemandMessage, DemandTracker, FrameHeader, HelloMessage, Opcode, ProtocolError, ServerHandshakeConfig, WelcomeMessage, negotiate};
+    use strata_types::SessionId;
 
     #[test]
     fn check_opcode_mapping() {

@@ -36,7 +36,7 @@ impl DemandMessage {
         let continuous = src.get_u8() != 0;
         let mut reserved = [0u8; 3];
         src.copy_to_slice(&mut reserved);
-        
+
         if reserved != [0u8; 3] {
             return Err(ProtocolError::MalformedPayload(
                 "Non-zero reserved bytes in DemandMessage".into(),
