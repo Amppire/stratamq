@@ -21,7 +21,7 @@ impl Default for ServerHandshakeConfig {
     fn default() -> Self {
         Self {
             version: PROTOCOL_VERSION,
-            capabilities: Capabilities::all(),
+            capabilities: Capabilities::BATCH_PUBLISH | Capabilities::DEMAND_WINDOW,
             max_frame_bytes: 16 * 1024 * 1024,
             max_batch_records: 10_000,
             max_demand_records: 10_000,
