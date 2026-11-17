@@ -34,7 +34,14 @@ impl DemandMessage {
         let max_bytes = src.get_u32();
         let wait = src.get_u32();
         let continuous = src.get_u8() != 0;
-        src.advance(3); // Skip reserved
+        let mut reserved = [0u8; 3];
+        src.copy_to_slice(&mut reserved);
+        
+        if reserved != [0u8; 3] {
+            return Err(ProtocolError::MalformedPayload(
+                "Non-zero reserved bytes in DemandMessage".into(),
+            ));
+        }
 
         Ok(Self {
             max_records,
