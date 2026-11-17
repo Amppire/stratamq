@@ -49,6 +49,12 @@ impl Decoder for FrameCodec {
         }
 
         let total_frame_len = FRAME_HEADER_LEN + header.payload_len as usize;
+        let total_frame_len = FRAME_HEADER_LEN.checked_add(header.payload_len as usize).ok_or_else(|| {
+            ProtocolError::FrameTooLarge {
+                size: header.payload_len,
+                max: self.limits.max_frame_bytes,
+            }
+        })?;
 
         // Step 4: Wait until the complete payload is in the buffer
         if src.len() < total_frame_len {
