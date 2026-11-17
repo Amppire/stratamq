@@ -1,6 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use crate::{DemandError, DemandLimits, DemandTracker, DemandWindow};
+    use crate::{DemandError, DemandLimits, DemandTracker, DemandMessage, FrameHeader, Opcode};
+
+    #[test]
+    fn check_opcode_mapping() {
+        assert_eq!(Opcode::try_from(0x0004), Ok(Opcode::Ping));
+        assert_eq!(Opcode::Ping as u16, 0x0004);
+        // Ensure 0x0005 (unmapped) is rejected and delivers an error
+        assert_eq!(Opcode::try_from(0x0005), Err(0x0005));
+    }
 
     #[test]
     fn credit_exhaustion_halts_delivery() {
