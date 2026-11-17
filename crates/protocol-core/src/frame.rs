@@ -50,6 +50,12 @@ impl FrameHeader {
         let request_id = buf.get_u64();
         let payload_len = buf.get_u32();
         let _reserved = buf.get_u32();
+        
+        if _reserved != 0 {
+            return Err(ProtocolError::MalformedPayload(
+                "Non-zero reserved bytes in frame header".into(),
+            ));
+        }
 
         Ok(Self {
             version,
