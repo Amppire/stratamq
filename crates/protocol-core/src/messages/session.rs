@@ -35,7 +35,6 @@ impl HelloMessage {
         }
         dst.put_u8(self.version);
         dst.put_u8(self.compression);
-        let id_bytes = self.client_id.as_bytes();
         dst.put_u16(id_bytes.len() as u16);
         dst.extend_from_slice(id_bytes);
         dst.put_u64(self.capabilities.bits());
