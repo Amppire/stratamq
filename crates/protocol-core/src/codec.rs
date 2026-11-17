@@ -50,7 +50,7 @@ impl Decoder for FrameCodec {
 
         let total_frame_len = FRAME_HEADER_LEN
             .checked_add(header.payload_len as usize)
-            .ok_or_else(|| ProtocolError::FrameTooLarge {
+            .ok_or(ProtocolError::FrameTooLarge {
                 size: header.payload_len,
                 max: self.limits.max_frame_bytes,
             })?;
