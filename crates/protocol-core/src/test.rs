@@ -1,11 +1,27 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        Capabilities, DemandError, DemandLimits, DemandMessage, DemandTracker, HelloMessage,
-        Opcode, ProtocolError, ServerHandshakeConfig, WelcomeMessage, negotiate,
+        Capabilities, CodecLimits, DemandError, DemandLimits, DemandMessage, DemandTracker, Frame,
+        FrameCodec, FrameHeader, HelloMessage, Opcode, ProtocolError, ServerHandshakeConfig,
+        WelcomeMessage, negotiate,
     };
-    use bytes::BytesMut;
+    use bytes::{Bytes, BytesMut};
     use strata_types::SessionId;
+    use tokio_util::codec::{Decoder, Encoder};
+
+    fn make_test_frame(payload: &[u8]) -> Frame {
+        Frame {
+            header: FrameHeader {
+                version: 0,
+                flags: 0,
+                opcode: Opcode::Publish,
+                stream_id: 1,
+                request_id: 100,
+                payload_len: payload.len() as u32,
+            },
+            payload: Bytes::copy_from_slice(payload),
+        }
+    }
 
     #[test]
     fn check_opcode_mapping() {
@@ -13,6 +29,93 @@ mod tests {
         assert_eq!(Opcode::Ping as u16, 0x0004);
         // Ensure 0x0005 (unmapped) is rejected and delivers an error
         assert_eq!(Opcode::try_from(0x0005), Err(0x0005));
+    }
+
+    #[test]
+    fn codec_partial_header_waits_for_complete_header() {
+        let mut codec = FrameCodec::new(CodecLimits::default());
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(&[0u8; 10]); // Less than 24-byte header
+        assert_eq!(codec.decode(&mut buf).unwrap(), None);
+        assert_eq!(buf.len(), 10); // Buffer remains intact
+    }
+    #[test]
+    fn codec_partial_payload_waits_for_complete_payload() {
+        let mut codec = FrameCodec::new(CodecLimits::default());
+        let frame = make_test_frame(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut full_buf = BytesMut::new();
+        codec.encode(frame.clone(), &mut full_buf).unwrap();
+        // Feed full header + half payload (24 + 4 = 28 bytes)
+        let mut partial = full_buf.split_to(28);
+        assert_eq!(codec.decode(&mut partial).unwrap(), None);
+        // Feed remaining 4 bytes
+        partial.extend_from_slice(&full_buf);
+        let decoded = codec
+            .decode(&mut partial)
+            .unwrap()
+            .expect("frame should decode");
+        assert_eq!(decoded, frame);
+    }
+    #[test]
+    fn codec_unpacks_two_frames_in_single_buffer() {
+        let mut codec = FrameCodec::new(CodecLimits::default());
+        let f1 = make_test_frame(b"first");
+        let f2 = make_test_frame(b"second");
+        let mut buf = BytesMut::new();
+        codec.encode(f1.clone(), &mut buf).unwrap();
+        codec.encode(f2.clone(), &mut buf).unwrap();
+        assert_eq!(codec.decode(&mut buf).unwrap(), Some(f1));
+        assert_eq!(codec.decode(&mut buf).unwrap(), Some(f2));
+        assert_eq!(codec.decode(&mut buf).unwrap(), None);
+    }
+    #[test]
+    fn codec_oversized_frame_rejected_without_allocating() {
+        let mut codec = FrameCodec::new(CodecLimits {
+            max_frame_bytes: 1024,
+        });
+        let header = FrameHeader {
+            version: 0,
+            flags: 0,
+            opcode: Opcode::Publish,
+            stream_id: 1,
+            request_id: 1,
+            payload_len: 2048, // Exceeds 1024
+        };
+        let mut buf = BytesMut::new();
+        header.encode(&mut buf);
+        let err = codec.decode(&mut buf).unwrap_err();
+        assert!(matches!(
+            err,
+            ProtocolError::FrameTooLarge {
+                size: 2048,
+                max: 1024
+            }
+        ));
+    }
+    #[test]
+    fn frame_header_truncation_returns_error_and_never_panics() {
+        for len in 0..24 {
+            let buf = vec![0u8; len];
+            let res = FrameHeader::decode(&buf);
+            assert!(matches!(res, Err(ProtocolError::MalformedPayload(_))));
+        }
+    }
+    #[test]
+    fn frame_header_non_zero_reserved_rejected() {
+        let mut buf = BytesMut::new();
+        let header = FrameHeader {
+            version: 0,
+            flags: 0,
+            opcode: Opcode::Ping,
+            stream_id: 0,
+            request_id: 1,
+            payload_len: 0,
+        };
+        header.encode(&mut buf);
+        // Overwrite reserved 4 bytes (indices 20..24) with non-zero
+        buf[20..24].copy_from_slice(&[0, 0, 0, 1]);
+        let err = FrameHeader::decode(&buf).unwrap_err();
+        assert!(matches!(err, ProtocolError::MalformedPayload(_)));
     }
 
     #[test]
