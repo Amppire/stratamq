@@ -14,7 +14,7 @@ pub struct ServerHandshakeConfig {
     pub max_frame_bytes: u32,
     pub max_batch_records: u32,
     pub max_demand_records: u32,
-    pub heartbeat_interval_ms: u32,
+    pub heartbeat_interval: u32,
 }
 
 impl Default for ServerHandshakeConfig {
@@ -25,7 +25,7 @@ impl Default for ServerHandshakeConfig {
             max_frame_bytes: 16 * 1024 * 1024,
             max_batch_records: 10_000,
             max_demand_records: 10_000,
-            heartbeat_interval_ms: 30_000,
+            heartbeat_interval: 30_000,
         }
     }
 }
@@ -55,7 +55,7 @@ pub fn negotiate(
         max_frame_bytes: config.max_frame_bytes,
         max_batch_records: config.max_batch_records,
         max_demand_records: config.max_demand_records,
-        heartbeat_interval_ms: config.heartbeat_interval_ms,
+        heartbeat_interval: config.heartbeat_interval,
     })
 }
 
@@ -75,7 +75,7 @@ mod tests {
             max_frame_bytes: 4 * 1024 * 1024,
             max_batch_records: 5000,
             max_demand_records: 2500,
-            heartbeat_interval_ms: 15000,
+            heartbeat_interval: 15000,
         };
 
         let mut buf = BytesMut::new();

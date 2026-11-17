@@ -20,7 +20,7 @@ pub struct DemandTracker {
     remaining_records: u32,
     remaining_bytes: u32,
     continuous: bool,
-    wait_deadline_ms: Option<u64>,
+    wait_deadline: Option<u64>,
     limits: DemandLimits,
 }
 
@@ -31,20 +31,20 @@ impl DemandTracker {
             remaining_records: 0,
             remaining_bytes: 0,
             continuous: false,
-            wait_deadline_ms: None,
+            wait_deadline: None,
             limits,
         }
     }
 
     /// Apply a new DEMAND command, resetting or initializing the credit window
-    pub fn grant(&mut self, demand: DemandWindow, now_ms: u64) {
+    pub fn grant(&mut self, demand: DemandWindow, now: u64) {
         // Enforce server bounds to prevent integer overflow attacks
         self.remaining_records = demand.max_records.min(self.limits.max_demand_records);
         self.remaining_bytes = demand.max_bytes.min(self.limits.max_demand_bytes);
         self.continuous = demand.continuous;
 
-        self.wait_deadline_ms = if demand.wait > 0 {
-            Some(now_ms.saturating_add(demand.wait as u64))
+        self.wait_deadline = if demand.wait > 0 {
+            Some(now.saturating_add(demand.wait as u64))
         } else {
             None
         };
@@ -65,12 +65,12 @@ impl DemandTracker {
 
     /// Check if at least 1 record and 1 byte can be delivered
     #[must_use]
-    pub fn can_deliver(&self, now_ms: u64) -> bool {
+    pub fn can_deliver(&self, now: u64) -> bool {
         if self.remaining_records == 0 || self.remaining_bytes == 0 {
             return false;
         }
-        if let Some(deadline) = self.wait_deadline_ms
-            && now_ms >= deadline
+        if let Some(deadline) = self.wait_deadline
+            && now >= deadline
         {
             return false;
         }

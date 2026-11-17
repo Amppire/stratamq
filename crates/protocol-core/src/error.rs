@@ -35,8 +35,8 @@ pub enum DemandError {
         requested_bytes: u32,
         available_bytes: u32,
     },
-    #[error("Demand window has expired at deadline {deadline_ms}")]
-    WindowExpired { deadline_ms: u64 },
+    #[error("Demand window has expired at deadline {deadline}")]
+    WindowExpired { deadline: u64 },
 }
 
 impl From<std::io::Error> for ProtocolError {

@@ -21,7 +21,7 @@ pub struct WelcomeMessage {
     pub max_frame_bytes: u32,
     pub max_batch_records: u32,
     pub max_demand_records: u32,
-    pub heartbeat_interval_ms: u32,
+    pub heartbeat_interval: u32,
 }
 
 impl HelloMessage {
@@ -85,7 +85,7 @@ impl WelcomeMessage {
         dst.put_u32(self.max_frame_bytes);
         dst.put_u32(self.max_batch_records);
         dst.put_u32(self.max_demand_records);
-        dst.put_u32(self.heartbeat_interval_ms);
+        dst.put_u32(self.heartbeat_interval);
     }
 
     pub fn decode(src: &mut Bytes) -> Result<Self, ProtocolError> {
@@ -105,7 +105,7 @@ impl WelcomeMessage {
         let max_frame_bytes = src.get_u32();
         let max_batch_records = src.get_u32();
         let max_demand_records = src.get_u32();
-        let heartbeat_interval_ms = src.get_u32();
+        let heartbeat_interval = src.get_u32();
 
         Ok(Self {
             version,
@@ -114,7 +114,7 @@ impl WelcomeMessage {
             max_frame_bytes,
             max_batch_records,
             max_demand_records,
-            heartbeat_interval_ms,
+            heartbeat_interval,
         })
     }
 }
