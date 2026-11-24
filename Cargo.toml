@@ -22,7 +22,14 @@ authors = ["Haris", "Shaunak"]
 
 [workspace.dependencies]
 bitflags = "2"
+async-trait = "0.1"
 bytes = "1"
+clap = { version = "4", features = ["derive"] }
+hdrhistogram = "7"
+rand = "0.10"
+rand_chacha = "0.10"
+rand_distr = "0.6"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 crc32c = "0.6"
 lz4_flex = "0.11"
 serde = { version = "1", features = ["derive"] }
