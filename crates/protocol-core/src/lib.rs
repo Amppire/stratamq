@@ -1,14 +1,21 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+#![forbid(unsafe_code)]
 
+mod capabilities;
+mod codec;
+mod demand;
+mod error;
+mod frame;
+mod handshake;
+mod messages;
+mod opcode;
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod test;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use capabilities::*;
+pub use codec::*;
+pub use demand::*;
+pub use error::*;
+pub use frame::*;
+pub use handshake::*;
+pub use messages::*;
+pub use opcode::*;

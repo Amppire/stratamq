@@ -21,6 +21,7 @@ license = "Apache-2.0"
 authors = ["Haris", "Shaunak"]
 
 [workspace.dependencies]
+bitflags = "2"
 async-trait = "0.1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
